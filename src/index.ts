@@ -192,7 +192,7 @@ export class LanguageServerClient {
                         completionItem: {
                             snippetSupport: false,
                             commitCharactersSupport: true,
-                            documentationFormat: ["plaintext", "markdown"],
+                            documentationFormat: ["markdown", "plaintext"],
                             deprecatedSupport: false,
                             preselectSupport: false,
                         },
@@ -201,7 +201,7 @@ export class LanguageServerClient {
                     signatureHelp: {
                         dynamicRegistration: true,
                         signatureInformation: {
-                            documentationFormat: ["plaintext", "markdown"],
+                            documentationFormat: ["markdown", "plaintext"],
                         },
                     },
                     declaration: {
