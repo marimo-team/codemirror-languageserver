@@ -56,6 +56,11 @@ class MockWebSocket {
                 .completion(anyParams)
                 .then((result) => this.respond(id, result));
         }
+        if (method === "completionItem/resolve") {
+            return this.server
+                .completionResolve(anyParams)
+                .then((result) => this.respond(id, result));
+        }
         if (method === "textDocument/hover") {
             return this.server
                 .hover(anyParams)

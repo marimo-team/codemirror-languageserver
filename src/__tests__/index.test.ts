@@ -66,6 +66,7 @@ describe("LanguageServer", () => {
                     textDocumentSync: 1,
                     completionProvider: {
                         triggerCharacters: ["."],
+                        resolveProvider: true,
                     },
                     hoverProvider: true,
                 },
@@ -78,6 +79,40 @@ describe("LanguageServer", () => {
 
             expect(client.capabilities).toEqual(initResult.capabilities);
             expect(client.ready).toBe(true);
+        });
+
+        it("should handle completion item resolution", async () => {
+            await client.initialize();
+
+            const mockCompletionItem = {
+                label: "test",
+                kind: 1,
+                data: 1,
+            };
+
+            const resolvedItem = {
+                ...mockCompletionItem,
+                documentation: {
+                    kind: "markdown",
+                    value: "Test documentation",
+                },
+            };
+
+            // biome-ignore lint/suspicious/noExplicitAny: <explanation>
+            (client as any).client.request.mockResolvedValueOnce(resolvedItem);
+
+            const result =
+                await client.completionItemResolve(mockCompletionItem);
+
+            // biome-ignore lint/suspicious/noExplicitAny: <explanation>
+            expect((client as any).client.request).toHaveBeenCalledWith(
+                {
+                    method: "completionItem/resolve",
+                    params: mockCompletionItem,
+                },
+                10000,
+            );
+            expect(result).toEqual(resolvedItem);
         });
 
         it("should handle text document changes", async () => {

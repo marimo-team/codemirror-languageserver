@@ -61,6 +61,7 @@ interface LSPRequestMap {
         LSP.CompletionParams,
         LSP.CompletionItem[] | LSP.CompletionList | null,
     ];
+    "completionItem/resolve": [LSP.CompletionItem, LSP.CompletionItem];
     "textDocument/definition": [
         LSP.DefinitionParams,
         LSP.Definition | LSP.DefinitionLink[] | null,
@@ -278,6 +279,10 @@ export class LanguageServerClient {
 
     public async textDocumentCompletion(params: LSP.CompletionParams) {
         return await this.request("textDocument/completion", params, timeout);
+    }
+
+    public async completionItemResolve(item: LSP.CompletionItem) {
+        return await this.request("completionItem/resolve", item, timeout);
     }
 
     public async textDocumentDefinition(params: LSP.DefinitionParams) {
@@ -522,103 +527,137 @@ class LanguageServerPlugin implements PluginValue {
             }
         }
 
-        const options = items.map(
-            ({
+        const options = items.map((item) => {
+            const {
                 detail,
+                labelDetails,
                 label,
                 kind,
                 textEdit,
+                insertText,
                 documentation,
                 additionalTextEdits,
-            }) => {
-                const completion: Completion = {
-                    label,
-                    detail,
-                    apply(
-                        view: EditorView,
-                        completion: Completion,
-                        from: number,
-                        to: number,
-                    ) {
-                        if (isLSPTextEdit(textEdit)) {
-                            view.dispatch(
-                                insertCompletionText(
-                                    view.state,
-                                    textEdit.newText,
-                                    posToOffset(
+            } = item;
+
+            const completion: Completion = {
+                label,
+                detail: labelDetails?.detail || detail,
+                apply(
+                    view: EditorView,
+                    completion: Completion,
+                    from: number,
+                    to: number,
+                ) {
+                    if (isLSPTextEdit(textEdit)) {
+                        view.dispatch(
+                            insertCompletionText(
+                                view.state,
+                                textEdit.newText,
+                                posToOffset(
+                                    view.state.doc,
+                                    textEdit.range.start,
+                                ),
+                                posToOffset(view.state.doc, textEdit.range.end),
+                            ),
+                        );
+                    } else {
+                        view.dispatch(
+                            insertCompletionText(
+                                view.state,
+                                // Prefer insertText, otherwise fallback to label
+                                insertText || label,
+                                from,
+                                to,
+                            ),
+                        );
+                    }
+                    if (!additionalTextEdits) {
+                        return;
+                    }
+                    const sortedEdits = additionalTextEdits.sort(
+                        ({ range: { end: a } }, { range: { end: b } }) => {
+                            if (
+                                posToOffset(view.state.doc, a) <
+                                posToOffset(view.state.doc, b)
+                            ) {
+                                return 1;
+                            }
+                            if (
+                                posToOffset(view.state.doc, a) >
+                                posToOffset(view.state.doc, b)
+                            ) {
+                                return -1;
+                            }
+                            return 0;
+                        },
+                    );
+                    for (const textEdit of sortedEdits) {
+                        view.dispatch(
+                            view.state.update({
+                                changes: {
+                                    from: posToOffset(
                                         view.state.doc,
                                         textEdit.range.start,
                                     ),
-                                    posToOffset(
+                                    to: posToOffset(
                                         view.state.doc,
                                         textEdit.range.end,
                                     ),
-                                ),
-                            );
-                        } else {
-                            view.dispatch(
-                                insertCompletionText(
-                                    view.state,
-                                    label,
-                                    from,
-                                    to,
-                                ),
-                            );
-                        }
-                        if (!additionalTextEdits) {
-                            return;
-                        }
-                        for (const textEdit of additionalTextEdits.sort(
-                            ({ range: { end: a } }, { range: { end: b } }) => {
-                                if (
-                                    posToOffset(view.state.doc, a) <
-                                    posToOffset(view.state.doc, b)
-                                ) {
-                                    return 1;
-                                }
-                                if (
-                                    posToOffset(view.state.doc, a) >
-                                    posToOffset(view.state.doc, b)
-                                ) {
-                                    return -1;
-                                }
-                                return 0;
-                            },
-                        )) {
-                            view.dispatch(
-                                view.state.update({
-                                    changes: {
-                                        from: posToOffset(
-                                            view.state.doc,
-                                            textEdit.range.start,
-                                        ),
-                                        to: posToOffset(
-                                            view.state.doc,
-                                            textEdit.range.end,
-                                        ),
-                                        insert: textEdit.newText,
-                                    },
-                                }),
-                            );
-                        }
-                    },
-                    type: kind && CompletionItemKindMap[kind].toLowerCase(),
-                };
-                if (documentation) {
-                    completion.info = () => {
+                                    insert: textEdit.newText,
+                                },
+                            }),
+                        );
+                    }
+                },
+                type: kind && CompletionItemKindMap[kind].toLowerCase(),
+            };
+
+            // Support lazy loading of documentation through completionItem/resolve
+            if (this.client.capabilities?.completionProvider?.resolveProvider) {
+                completion.info = async () => {
+                    try {
+                        const resolved =
+                            await this.client.completionItemResolve(item);
                         const dom = document.createElement("div");
                         dom.classList.add("documentation");
+                        const content = resolved.documentation || documentation;
                         if (this.allowHTMLContent) {
-                            dom.innerHTML = formatContents(documentation);
+                            dom.innerHTML = formatContents(content);
                         } else {
-                            dom.textContent = formatContents(documentation);
+                            dom.textContent = formatContents(content);
                         }
                         return dom;
-                    };
-                }
-                return completion;
-            },
-        );
+                    } catch (e) {
+                        console.error("Failed to resolve completion item:", e);
+                        // Fallback to existing documentation if resolve fails
+                        if (documentation) {
+                            const dom = document.createElement("div");
+                            dom.classList.add("documentation");
+                            if (this.allowHTMLContent) {
+                                dom.innerHTML = formatContents(documentation);
+                            } else {
+                                dom.textContent = formatContents(documentation);
+                            }
+                            return dom;
+                        }
+                        return null;
+                    }
+                };
+            } else if (documentation) {
+                // Fallback for servers without resolve support
+                completion.info = () => {
+                    const dom = document.createElement("div");
+                    dom.classList.add("documentation");
+                    if (this.allowHTMLContent) {
+                        dom.innerHTML = formatContents(documentation);
+                    } else {
+                        dom.textContent = formatContents(documentation);
+                    }
+                    return dom;
+                };
+            }
+            return completion;
+        });
 
         return {
             from: pos,
@@ -951,7 +990,7 @@ class LanguageServerPlugin implements PluginValue {
 
 interface LanguageServerBaseOptions {
     rootUri: string;
-    workspaceFolders: LSP.WorkspaceFolder[];
+    workspaceFolders: LSP.WorkspaceFolder[] | null;
     documentUri: string;
     languageId: string;
 }

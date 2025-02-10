@@ -88,19 +88,133 @@ export class MockLSPServer {
                     label: "console",
                     kind: LSP.CompletionItemKind.Module,
                     detail: "Console object",
+                    data: 1, // Used to identify item in resolve
                 },
                 {
                     label: "log",
                     kind: LSP.CompletionItemKind.Method,
                     detail: "Log to console",
+                    data: 2,
                 },
                 {
                     label: "error",
                     kind: LSP.CompletionItemKind.Method,
                     detail: "Log error to console",
+                    data: 3,
+                },
+                {
+                    label: "warn",
+                    kind: LSP.CompletionItemKind.Method,
+                    detail: "Log warning to console",
+                    data: 4,
+                },
+                {
+                    label: "info",
+                    kind: LSP.CompletionItemKind.Method,
+                    detail: "Log info to console",
+                    data: 5,
                 },
             ],
         };
+    }
+
+    public async completionResolve(
+        item: LSP.CompletionItem,
+    ): Promise<LSP.CompletionItem> {
+        const resolvedItem = { ...item };
+        // Add detailed documentation based on the item
+        switch (item.data) {
+            case 1:
+                resolvedItem.documentation = {
+                    kind: "markdown",
+                    value: [
+                        "# Console Object",
+                        "",
+                        "The console object provides access to the browser's debugging console.",
+                        "",
+                        "## Methods",
+                        "- `log()`: Output a message to the console",
+                        "- `error()`: Output an error message",
+                        "- `warn()`: Output a warning message",
+                        "- `info()`: Output an informational message",
+                    ].join("\n"),
+                };
+                break;
+            case 2:
+                resolvedItem.documentation = {
+                    kind: "markdown",
+                    value: [
+                        "# console.log()",
+                        "",
+                        "Outputs a message to the console.",
+                        "",
+                        "```typescript",
+                        "console.log(obj1 [, obj2, ..., objN])",
+                        "console.log(msg [, subst1, ..., substN])",
+                        "```",
+                        "",
+                        "## Parameters",
+                        "- `obj1...objN`: A list of objects to output",
+                        "- `msg`: A JavaScript string containing zero or more substitution strings",
+                        "- `subst1...substN`: JavaScript objects with which to replace substitution strings",
+                    ].join("\n"),
+                };
+                break;
+            case 3:
+                resolvedItem.documentation = {
+                    kind: "markdown",
+                    value: [
+                        "# console.error()",
+                        "",
+                        "Outputs an error message to the console.",
+                        "",
+                        "```typescript",
+                        "console.error(obj1 [, obj2, ..., objN])",
+                        "```",
+                        "",
+                        "Messages are also written to stderr in Node.js.",
+                        "",
+                        "## Parameters",
+                        "- `obj1...objN`: A list of objects to output",
+                    ].join("\n"),
+                };
+                break;
+            case 4:
+                resolvedItem.documentation = {
+                    kind: "markdown",
+                    value: [
+                        "# console.warn()",
+                        "",
+                        "Outputs a warning message to the console.",
+                        "",
+                        "```typescript",
+                        "console.warn(obj1 [, obj2, ..., objN])",
+                        "```",
+                        "",
+                        "## Parameters",
+                        "- `obj1...objN`: A list of objects to output",
+                    ].join("\n"),
+                };
+                break;
+            case 5:
+                resolvedItem.documentation = {
+                    kind: "markdown",
+                    value: [
+                        "# console.info()",
+                        "",
+                        "Outputs an informational message to the console.",
+                        "",
+                        "```typescript",
+                        "console.info(obj1 [, obj2, ..., objN])",
+                        "```",
+                        "",
+                        "## Parameters",
+                        "- `obj1...objN`: A list of objects to output",
+                    ].join("\n"),
+                };
+                break;
+        }
+        return resolvedItem;
     }
 
     public async hover(params: LSP.HoverParams): Promise<LSP.Hover> {

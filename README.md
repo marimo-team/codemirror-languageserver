@@ -128,6 +128,8 @@ This is a modernized fork of [FurqanSoftware/codemirror-languageserver](https://
 - Testing
 - GitHub Actions CI
 - Symbol renaming
+- Markdown code completions
+- Code completion `resolve` support
 - Code actions and quick fixes
 - Go-to-definition
 - Improved demo page
