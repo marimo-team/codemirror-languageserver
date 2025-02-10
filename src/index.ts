@@ -109,6 +109,8 @@ export class LanguageServerClient {
     private transport: Transport;
     private requestManager: RequestManager;
     private client: Client;
+    private initializationOptions: LanguageServerClientOptions["initializationOptions"];
+    private clientCapabilities: LanguageServerClientOptions["capabilities"];
 
     private plugins: LanguageServerPlugin[];
 
@@ -120,7 +122,8 @@ export class LanguageServerClient {
         this.autoClose = options.autoClose;
         this.plugins = [];
         this.transport = options.transport;
-
+        this.initializationOptions = options.initializationOptions;
+        this.clientCapabilities = options.capabilities;
         this.requestManager = new RequestManager([this.transport]);
         this.client = new Client(this.requestManager);
 
@@ -153,89 +156,97 @@ export class LanguageServerClient {
     }
 
     protected getInitializationOptions(): LSP.InitializeParams["initializationOptions"] {
-        return {
-            capabilities: {
-                textDocument: {
-                    hover: {
-                        dynamicRegistration: true,
-                        contentFormat: ["plaintext", "markdown"],
-                    },
-                    moniker: {},
-                    synchronization: {
-                        dynamicRegistration: true,
-                        willSave: false,
-                        didSave: false,
-                        willSaveWaitUntil: false,
-                    },
-                    codeAction: {
-                        dynamicRegistration: true,
-                        codeActionLiteralSupport: {
-                            codeActionKind: {
-                                valueSet: [
-                                    "",
-                                    "quickfix",
-                                    "refactor",
-                                    "refactor.extract",
-                                    "refactor.inline",
-                                    "refactor.rewrite",
-                                    "source",
-                                    "source.organizeImports",
-                                ],
-                            },
-                        },
-                        resolveSupport: {
-                            properties: ["edit"],
+        const defaultClientCapabilities: LSP.ClientCapabilities = {
+            textDocument: {
+                hover: {
+                    dynamicRegistration: true,
+                    contentFormat: ["plaintext", "markdown"],
+                },
+                moniker: {},
+                synchronization: {
+                    dynamicRegistration: true,
+                    willSave: false,
+                    didSave: false,
+                    willSaveWaitUntil: false,
+                },
+                codeAction: {
+                    dynamicRegistration: true,
+                    codeActionLiteralSupport: {
+                        codeActionKind: {
+                            valueSet: [
+                                "",
+                                "quickfix",
+                                "refactor",
+                                "refactor.extract",
+                                "refactor.inline",
+                                "refactor.rewrite",
+                                "source",
+                                "source.organizeImports",
+                            ],
                         },
                     },
-                    completion: {
-                        dynamicRegistration: true,
-                        completionItem: {
-                            snippetSupport: false,
-                            commitCharactersSupport: true,
-                            documentationFormat: ["markdown", "plaintext"],
-                            deprecatedSupport: false,
-                            preselectSupport: false,
-                        },
-                        contextSupport: false,
-                    },
-                    signatureHelp: {
-                        dynamicRegistration: true,
-                        signatureInformation: {
-                            documentationFormat: ["markdown", "plaintext"],
-                        },
-                    },
-                    declaration: {
-                        dynamicRegistration: true,
-                        linkSupport: true,
-                    },
-                    definition: {
-                        dynamicRegistration: true,
-                        linkSupport: true,
-                    },
-                    typeDefinition: {
-                        dynamicRegistration: true,
-                        linkSupport: true,
-                    },
-                    implementation: {
-                        dynamicRegistration: true,
-                        linkSupport: true,
-                    },
-                    rename: {
-                        dynamicRegistration: true,
-                        prepareSupport: true,
+                    resolveSupport: {
+                        properties: ["edit"],
                     },
                 },
-                workspace: {
-                    didChangeConfiguration: {
-                        dynamicRegistration: true,
+                completion: {
+                    dynamicRegistration: true,
+                    completionItem: {
+                        snippetSupport: false,
+                        commitCharactersSupport: true,
+                        documentationFormat: ["markdown", "plaintext"],
+                        deprecatedSupport: false,
+                        preselectSupport: false,
                     },
+                    contextSupport: false,
+                },
+                signatureHelp: {
+                    dynamicRegistration: true,
+                    signatureInformation: {
+                        documentationFormat: ["markdown", "plaintext"],
+                    },
+                },
+                declaration: {
+                    dynamicRegistration: true,
+                    linkSupport: true,
+                },
+                definition: {
+                    dynamicRegistration: true,
+                    linkSupport: true,
+                },
+                typeDefinition: {
+                    dynamicRegistration: true,
+                    linkSupport: true,
+                },
+                implementation: {
+                    dynamicRegistration: true,
+                    linkSupport: true,
+                },
+                rename: {
+                    dynamicRegistration: true,
+                    prepareSupport: true,
                 },
             },
-            initializationOptions: null,
+            workspace: {
+                didChangeConfiguration: {
+                    dynamicRegistration: true,
+                },
+            },
+        };
+
+        const defaultOptions = {
+            capabilities: this.clientCapabilities
+                ? typeof this.clientCapabilities === "function"
+                    ? this.clientCapabilities(defaultClientCapabilities)
+                    : this.clientCapabilities
+                : defaultClientCapabilities,
+            initializationOptions: this.initializationOptions,
             processId: null,
             rootUri: this.rootUri,
             workspaceFolders: this.workspaceFolders,
         };
+
+        return defaultOptions;
     }
 
     public async initialize() {
@@ -244,7 +255,6 @@ export class LanguageServerClient {
             this.getInitializationOptions(),
             timeout * 3,
         );
-        console.log("initialize", capabilities);
         this.capabilities = capabilities;
         this.notify("initialized", {});
         this.ready = true;
@@ -595,7 +605,16 @@ class LanguageServerPlugin implements PluginValue {
                     type: kind && CompletionItemKindMap[kind].toLowerCase(),
                 };
                 if (documentation) {
-                    completion.info = formatContents(documentation);
+                    completion.info = () => {
+                        const dom = document.createElement("div");
+                        dom.classList.add("documentation");
+                        if (this.allowHTMLContent) {
+                            dom.innerHTML = formatContents(documentation);
+                        } else {
+                            dom.textContent = formatContents(documentation);
+                        }
+                        return dom;
+                    };
                 }
                 return completion;
             },
@@ -940,6 +959,12 @@ interface LanguageServerBaseOptions {
 interface LanguageServerClientOptions extends LanguageServerBaseOptions {
     transport: Transport;
     autoClose?: boolean;
+    capabilities?:
+        | LSP.InitializeParams["capabilities"]
+        | ((
+              defaultCapabilities: LSP.InitializeParams["capabilities"],
+          ) => LSP.InitializeParams["capabilities"]);
+    initializationOptions?: LSP.InitializeParams["initializationOptions"];
 }
 
 interface KeyboardShortcuts {
