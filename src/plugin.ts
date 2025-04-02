@@ -112,14 +112,22 @@ export class LanguageServerClient {
 
     private plugins: LanguageServerPlugin[];
 
-    constructor({ rootUri, workspaceFolders, transport, autoClose, initializationOptions, capabilities, timeout = TIMEOUT }: LanguageServerClientOptions) {
-        this.rootUri = rootUri
-        this.workspaceFolders = workspaceFolders
-        this.transport = transport
-        this.autoClose = autoClose
-        this.initializationOptions = initializationOptions
-        this.clientCapabilities = capabilities
-        this.timeout = timeout
+    constructor({
+        rootUri,
+        workspaceFolders,
+        transport,
+        autoClose,
+        initializationOptions,
+        capabilities,
+        timeout = TIMEOUT,
+    }: LanguageServerClientOptions) {
+        this.rootUri = rootUri;
+        this.workspaceFolders = workspaceFolders;
+        this.transport = transport;
+        this.autoClose = autoClose;
+        this.initializationOptions = initializationOptions;
+        this.clientCapabilities = capabilities;
+        this.timeout = timeout;
         this.ready = false;
         this.capabilities = null;
         this.plugins = [];
@@ -276,7 +284,11 @@ export class LanguageServerClient {
     }
 
     public async textDocumentCompletion(params: LSP.CompletionParams) {
-        return await this.request("textDocument/completion", params, this.timeout);
+        return await this.request(
+            "textDocument/completion",
+            params,
+            this.timeout,
+        );
     }
 
     public async completionItemResolve(item: LSP.CompletionItem) {
@@ -284,11 +296,19 @@ export class LanguageServerClient {
     }
 
     public async textDocumentDefinition(params: LSP.DefinitionParams) {
-        return await this.request("textDocument/definition", params, this.timeout);
+        return await this.request(
+            "textDocument/definition",
+            params,
+            this.timeout,
+        );
     }
 
     public async textDocumentCodeAction(params: LSP.CodeActionParams) {
-        return await this.request("textDocument/codeAction", params, this.timeout);
+        return await this.request(
+            "textDocument/codeAction",
+            params,
+            this.timeout,
+        );
     }
 
     public async textDocumentRename(params: LSP.RenameParams) {
@@ -408,7 +428,9 @@ export class LanguageServerPlugin implements PluginValue {
         });
     }
 
-    public async sendChanges(contentChanges: LSP.TextDocumentContentChangeEvent[]) {
+    public async sendChanges(
+        contentChanges: LSP.TextDocumentContentChangeEvent[],
+    ) {
         if (!this.client.ready) {
             return;
         }
@@ -428,8 +450,8 @@ export class LanguageServerPlugin implements PluginValue {
     public requestDiagnostics(view: EditorView) {
         this.sendChanges([
             {
-                text: view.state.doc.toString()
-            }
+                text: view.state.doc.toString(),
+            },
         ]);
     }
 
@@ -518,11 +540,9 @@ export class LanguageServerPlugin implements PluginValue {
 
         const items = "items" in result ? result.items : result;
 
+        // Match is undefined if there are no common prefixes
         const match = prefixMatch(items);
-        if (!match) {
-            return null;
-        }
-        const token = context.matchBefore(match);
+        const token = match ? context.matchBefore(match) : null;
         let { pos } = context;
 
         const sortedItems = sortCompletionItems(
@@ -642,12 +662,12 @@ export class LanguageServerPlugin implements PluginValue {
         }
 
         const severityMap: Record<DiagnosticSeverity, Diagnostic["severity"]> =
-        {
-            [DiagnosticSeverity.Error]: "error",
-            [DiagnosticSeverity.Warning]: "warning",
-            [DiagnosticSeverity.Information]: "info",
-            [DiagnosticSeverity.Hint]: "info",
-        };
+            {
+                [DiagnosticSeverity.Error]: "error",
+                [DiagnosticSeverity.Warning]: "warning",
+                [DiagnosticSeverity.Information]: "info",
+                [DiagnosticSeverity.Hint]: "info",
+            };
 
         const diagnostics = params.diagnostics.map(
             async ({ range, message, severity, code }) => {
@@ -659,7 +679,7 @@ export class LanguageServerPlugin implements PluginValue {
                     (action): Action => ({
                         name:
                             "command" in action &&
-                                typeof action.command === "object"
+                            typeof action.command === "object"
                                 ? action.command?.title || action.title
                                 : action.title,
                         apply: async () => {
@@ -1348,10 +1368,10 @@ interface LanguageServerClientOptions {
      * Can be an object or a function that modifies the default capabilities.
      */
     capabilities?:
-    | LSP.InitializeParams["capabilities"]
-    | ((
-        defaultCapabilities: LSP.InitializeParams["capabilities"],
-    ) => LSP.InitializeParams["capabilities"]);
+        | LSP.InitializeParams["capabilities"]
+        | ((
+              defaultCapabilities: LSP.InitializeParams["capabilities"],
+          ) => LSP.InitializeParams["capabilities"]);
     /** Additional initialization options to send to the language server */
     initializationOptions?: LSP.InitializeParams["initializationOptions"];
 }
@@ -1439,7 +1459,7 @@ interface LanguageServerOptions extends FeatureOptions {
  */
 interface LanguageServerWebsocketOptions
     extends Omit<LanguageServerOptions, "client">,
-    Omit<LanguageServerClientOptions, "transport"> {
+        Omit<LanguageServerClientOptions, "transport"> {
     /** WebSocket URI for connecting to the language server */
     serverUri: `ws://${string}` | `wss://${string}`;
 }
