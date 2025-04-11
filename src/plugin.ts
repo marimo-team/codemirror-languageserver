@@ -199,7 +199,7 @@ export class LanguageServerClient {
                 completion: {
                     dynamicRegistration: true,
                     completionItem: {
-                        snippetSupport: false,
+                        snippetSupport: true,
                         commitCharactersSupport: true,
                         documentationFormat: ["markdown", "plaintext"],
                         deprecatedSupport: false,
