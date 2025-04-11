@@ -542,7 +542,12 @@ export class LanguageServerPlugin implements PluginValue {
 
         // Match is undefined if there are no common prefixes
         const match = prefixMatch(items);
-        const token = match ? context.matchBefore(match) : null;
+
+        const token = match
+            ? context.matchBefore(match)
+            : // Fallback to matching any character
+              context.matchBefore(/[a-zA-Z0-9]*/);
+
         let { pos } = context;
 
         const sortedItems = sortCompletionItems(
