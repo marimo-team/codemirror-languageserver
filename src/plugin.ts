@@ -546,8 +546,7 @@ export class LanguageServerPlugin implements PluginValue {
         const token = match
             ? context.matchBefore(match)
             : // Fallback to matching any character
-              context.matchBefore(/[a-zA-Z0-9]*/);
-
+              context.matchBefore(/[a-zA-Z0-9]+/);
         let { pos } = context;
 
         const sortedItems = sortCompletionItems(
