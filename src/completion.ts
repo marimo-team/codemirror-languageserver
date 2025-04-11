@@ -2,7 +2,7 @@ import type { EditorView } from "@codemirror/view";
 import type { Completion } from "@codemirror/autocomplete";
 import type * as LSP from "vscode-languageserver-protocol";
 import { CompletionItemKind } from "vscode-languageserver-protocol";
-import { insertCompletionText } from "@codemirror/autocomplete";
+import { insertCompletionText, snippet } from "@codemirror/autocomplete";
 import {
     formatContents,
     isEmptyDocumentation,
@@ -21,6 +21,20 @@ interface ConvertCompletionOptions {
     resolveItem: (item: LSP.CompletionItem) => Promise<LSP.CompletionItem>;
 }
 
+namespace InsertTextFormat {
+	export const PlainText = 1;
+	export const Snippet = 2;
+}
+
+/**
+ * Converts an LSP snippet to a CodeMirror snippet
+ */
+function convertSnippet(snippet: string): string {
+    // Braces are required in CodeMirror syntax
+    return snippet.replaceAll(/(\$(\d+))/g, (match, p1, p2) => '${' + p2 + '}')
+}
+
+
 /**
  * Converts an LSP completion item to a CodeMirror completion item
  */
@@ -28,6 +42,7 @@ export function convertCompletionItem(
     item: LSP.CompletionItem,
     options: ConvertCompletionOptions,
 ): Completion {
+
     const {
         detail,
         labelDetails,
@@ -37,6 +52,7 @@ export function convertCompletionItem(
         insertText,
         documentation,
         additionalTextEdits,
+        insertTextFormat
     } = item;
 
     const completion: Completion = {
@@ -58,14 +74,25 @@ export function convertCompletionItem(
                     ),
                 );
             } else {
-                view.dispatch(
-                    insertCompletionText(
-                        view.state,
-                        insertText || label,
+                if (insertText && insertTextFormat == InsertTextFormat.Snippet) {
+                    const applySnippet = snippet(convertSnippet(insertText));
+                    applySnippet(
+                        view,
+                        null,
                         from,
                         to,
-                    ),
-                );
+                    );
+                } else {
+                    // By default it is PlainText
+                    view.dispatch(
+                        insertCompletionText(
+                            view.state,
+                            insertText || label,
+                            from,
+                            to,
+                        ),
+                    );
+                }
             }
             if (!additionalTextEdits) {
                 return;
