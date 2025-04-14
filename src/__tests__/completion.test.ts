@@ -319,7 +319,7 @@ describe("sortCompletionItems", () => {
 
 describe("convertSnippet", () => {
     it("should remove backslashes", () => {
-        const input = "filename\\/filename.txt";
+        const input = String.raw`filename\\/filename.txt`;
         const result = convertSnippet(input);
         expect(result).toBe("filename/filename.txt");
 

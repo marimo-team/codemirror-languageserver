@@ -31,7 +31,7 @@ namespace InsertTextFormat {
  */
 export function convertSnippet(snippet: string): string {
     // Remove double backslashes
-    const result = snippet.replaceAll(/\\/g, "");
+    const result = snippet.replaceAll(/\\\\/g, "");
 
     // Braces are required in CodeMirror syntax
     return result.replaceAll(
@@ -88,12 +88,7 @@ export function convertCompletionItem(
                 } else {
                     // By default it is PlainText
                     view.dispatch(
-                        insertCompletionText(
-                            view.state,
-                            insertText || label,
-                            from,
-                            to,
-                        ),
+                        insertCompletionText(view.state, label, from, to),
                     );
                 }
             }
