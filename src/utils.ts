@@ -1,5 +1,5 @@
 import type { Text } from "@codemirror/state";
-import { ChangeSet } from "@codemirror/state"
+import type { ChangeSet } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import { marked } from "marked";
 import type * as LSP from "vscode-languageserver-protocol";
@@ -213,7 +213,10 @@ function isEmptyIshValue(value: unknown) {
  * @param doc The doc before applying the ChangeSet
  * @param changes The `ChangeSet` to map
  */
-export function eventsFromChangeSet(doc: Text, changes: ChangeSet): LSP.TextDocumentContentChangeEvent[] {
+export function eventsFromChangeSet(
+    doc: Text,
+    changes: ChangeSet,
+): LSP.TextDocumentContentChangeEvent[] {
     const events: {
         range?: LSP.Range;
         text: string;
@@ -222,9 +225,9 @@ export function eventsFromChangeSet(doc: Text, changes: ChangeSet): LSP.TextDocu
     changes.iterChanges((fromA, toA, _, __, inserted) => {
         const text = inserted.toString();
         // Represents a full document change
-        if (fromA == 0 && toA == doc.length) {
-            events.push({ text })
-            return
+        if (fromA === 0 && toA === doc.length) {
+            events.push({ text });
+            return;
         }
 
         // An incremental change event, converting (index) to (line, col)

@@ -375,6 +375,7 @@ export class LanguageServerPlugin implements PluginValue {
     public languageId: string;
     public view: EditorView;
     public allowHTMLContent = false;
+    public sendIncrementalChanges: boolean;
     public featureOptions: Required<FeatureOptions>;
     public onGoToDefinition: ((result: DefinitionResult) => void) | undefined;
 
@@ -384,6 +385,7 @@ export class LanguageServerPlugin implements PluginValue {
         languageId: string,
         view: EditorView,
         featureOptions: Required<FeatureOptions>,
+        sendIncrementalChanges = true,
         allowHTMLContent = false,
         onGoToDefinition?: (result: DefinitionResult) => void,
     ) {
@@ -393,6 +395,7 @@ export class LanguageServerPlugin implements PluginValue {
         this.languageId = languageId;
         this.view = view;
         this.allowHTMLContent = allowHTMLContent;
+        this.sendIncrementalChanges = sendIncrementalChanges;
         this.featureOptions = featureOptions;
         this.onGoToDefinition = onGoToDefinition;
 
@@ -403,11 +406,21 @@ export class LanguageServerPlugin implements PluginValue {
         });
     }
 
-    public update({ docChanged, startState: { doc }, changes }: ViewUpdate) {
+    public update({
+        state,
+        docChanged,
+        startState: { doc },
+        changes,
+    }: ViewUpdate) {
         if (!docChanged) {
             return;
         }
-        this.sendChanges(eventsFromChangeSet(doc, changes));
+
+        if (this.sendIncrementalChanges) {
+            this.sendChanges(eventsFromChangeSet(doc, changes));
+        } else {
+            this.sendChanges([{ text: state.doc.toString() }]);
+        }
     }
 
     public destroy() {
@@ -1456,6 +1469,12 @@ interface LanguageServerOptions extends FeatureOptions {
      * Default is to show completions when typing a word, after a dot, or after a slash.
      */
     completionMatchBefore?: RegExp;
+
+    /**
+     * Whether to send incremental changes to the language server.
+     * @default true
+     */
+    sendIncrementalChanges?: boolean;
 }
 
 /**
@@ -1514,6 +1533,7 @@ export function languageServerWithClient(options: LanguageServerOptions) {
                 options.languageId ?? view.state.facet(languageId),
                 view,
                 featuresOptions,
+                options.sendIncrementalChanges ?? true,
                 options.allowHTMLContent ?? false,
                 options.onGoToDefinition,
             );
