@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { convertCompletionItem } from "../completion.js";
+import { convertCompletionItem, convertSnippet } from "../completion.js";
 import type * as LSP from "vscode-languageserver-protocol";
 import { CompletionItemKind } from "vscode-languageserver-protocol";
 import { sortCompletionItems } from "../completion.js";
@@ -314,5 +314,47 @@ describe("sortCompletionItems", () => {
             "_hidden",
             "__private",
         ]);
+    });
+});
+
+describe("convertSnippet", () => {
+    it("should remove backslashes", () => {
+        const input = "filename\\/filename.txt";
+        const result = convertSnippet(input);
+        expect(result).toBe("filename/filename.txt");
+
+        // but not single
+        const input2 = "filename\n/filename.txt";
+        const result2 = convertSnippet(input2);
+        expect(result2).toBe("filename\n/filename.txt");
+    });
+
+    it("should convert $1 to ${1}", () => {
+        const input = "function($1) { $2 }";
+        const result = convertSnippet(input);
+        expect(result).toBe("function(${1}) { ${2} }");
+    });
+
+    it("should handle multiple placeholders", () => {
+        const input = "for (let $1 = 0; $1 < $2; $1++) {\n\t$3\n}";
+        const result = convertSnippet(input);
+        expect(result).toBe(
+            "for (let ${1} = 0; ${1} < ${2}; ${1}++) {\n\t${3}\n}",
+        );
+    });
+
+    it("should handle complex snippets", () => {
+        const input =
+            "try {\n\t$1\n} catch (error$2) {\n\t$3\n} finally {\n\t$4\n}";
+        const result = convertSnippet(input);
+        expect(result).toBe(
+            "try {\n\t${1}\n} catch (error${2}) {\n\t${3}\n} finally {\n\t${4}\n}",
+        );
+    });
+
+    it("should not modify existing braced placeholders", () => {
+        const input = "function() { ${1:default} }";
+        const result = convertSnippet(input);
+        expect(result).toBe("function() { ${1:default} }");
     });
 });

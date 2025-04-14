@@ -22,18 +22,24 @@ interface ConvertCompletionOptions {
 }
 
 namespace InsertTextFormat {
-	export const PlainText = 1;
-	export const Snippet = 2;
+    export const PlainText = 1;
+    export const Snippet = 2;
 }
 
 /**
  * Converts an LSP snippet to a CodeMirror snippet
  */
-function convertSnippet(snippet: string): string {
-    // Braces are required in CodeMirror syntax
-    return snippet.replaceAll(/(\$(\d+))/g, (match, p1, p2) => '${' + p2 + '}')
-}
+export function convertSnippet(snippet: string): string {
+    // Remove double backslashes
+    const result = snippet.replaceAll(/\\/g, "");
 
+    // Braces are required in CodeMirror syntax
+    return result.replaceAll(
+        /(\$(\d+))/g,
+        // biome-ignore lint/style/useTemplate: reads better
+        (_match, _p1, p2) => "${" + p2 + "}",
+    );
+}
 
 /**
  * Converts an LSP completion item to a CodeMirror completion item
@@ -42,7 +48,6 @@ export function convertCompletionItem(
     item: LSP.CompletionItem,
     options: ConvertCompletionOptions,
 ): Completion {
-
     const {
         detail,
         labelDetails,
@@ -52,7 +57,7 @@ export function convertCompletionItem(
         insertText,
         documentation,
         additionalTextEdits,
-        insertTextFormat
+        insertTextFormat,
     } = item;
 
     const completion: Completion = {
@@ -74,14 +79,12 @@ export function convertCompletionItem(
                     ),
                 );
             } else {
-                if (insertText && insertTextFormat == InsertTextFormat.Snippet) {
+                if (
+                    insertText &&
+                    insertTextFormat === InsertTextFormat.Snippet
+                ) {
                     const applySnippet = snippet(convertSnippet(insertText));
-                    applySnippet(
-                        view,
-                        null,
-                        from,
-                        to,
-                    );
+                    applySnippet(view, null, from, to);
                 } else {
                     // By default it is PlainText
                     view.dispatch(
