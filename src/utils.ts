@@ -37,6 +37,14 @@ export function offsetToPos(doc: Text, offset: number) {
     };
 }
 
+// Add hook to remove empty code fences
+const renderer = new marked.Renderer();
+const prevCode = renderer.code;
+renderer.code = (code) => {
+    if (!code.text.trim()) return "";
+    return prevCode.call(renderer, code);
+};
+
 export function formatContents(
     contents:
         | LSP.MarkupContent
@@ -50,12 +58,20 @@ export function formatContents(
     if (isLSPMarkupContent(contents)) {
         let value = contents.value;
         if (contents.kind === "markdown") {
-            value = marked(value, { async: false });
+            value = marked(value.trim(), {
+                async: false,
+                gfm: true,
+                breaks: true,
+                renderer: renderer,
+            });
         }
         return value;
     }
     if (Array.isArray(contents)) {
-        return contents.map((c) => `${formatContents(c)}\n\n`).join("");
+        return contents
+            .map((c) => formatContents(c))
+            .filter(Boolean)
+            .join("\n\n");
     }
     if (typeof contents === "string") {
         return contents;
