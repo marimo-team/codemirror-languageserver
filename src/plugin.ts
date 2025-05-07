@@ -35,6 +35,7 @@ import {
     posToOffset,
     posToOffsetOrZero,
     prefixMatch,
+    renderMarkdown,
     showErrorMessage,
 } from "./utils.js";
 import { convertCompletionItem, sortCompletionItems } from "./completion.js";
@@ -742,6 +743,11 @@ export class LanguageServerPlugin implements PluginValue {
                     to: posToOffsetOrZero(this.view.state.doc, range.end),
                     severity: severityMap[severity ?? DiagnosticSeverity.Error],
                     message: message,
+                    renderMessage: () => {
+                        const dom = document.createElement("div");
+                        dom.innerHTML = renderMarkdown(message);
+                        return dom;
+                    },
                     source: this.languageId,
                     actions: codemirrorActions,
                 };

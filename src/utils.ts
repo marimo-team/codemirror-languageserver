@@ -45,6 +45,18 @@ renderer.code = (code) => {
     return prevCode.call(renderer, code);
 };
 
+/**
+ * Render markdown to HTML
+ */
+export function renderMarkdown(markdown: string) {
+    return marked(markdown, {
+        async: false,
+        gfm: true,
+        breaks: true,
+        renderer: renderer,
+    });
+}
+
 export function formatContents(
     contents:
         | LSP.MarkupContent
@@ -58,12 +70,7 @@ export function formatContents(
     if (isLSPMarkupContent(contents)) {
         let value = contents.value;
         if (contents.kind === "markdown") {
-            value = marked(value.trim(), {
-                async: false,
-                gfm: true,
-                breaks: true,
-                renderer: renderer,
-            });
+            value = renderMarkdown(value.trim());
         }
         return value;
     }
