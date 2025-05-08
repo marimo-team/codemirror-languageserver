@@ -1704,6 +1704,7 @@ export function languageServerWithClient(options: LanguageServerOptions) {
                             result,
                         );
                     },
+                    ...(options.completionConfig?.override || []),
                 ],
             }),
         );
