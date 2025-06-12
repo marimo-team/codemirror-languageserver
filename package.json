@@ -4,7 +4,7 @@
         "access": "public"
     },
     "sideEffects": false,
-    "version": "1.15.14",
+    "version": "1.15.15",
     "description": "Language Server Plugin for CodeMirror 6",
     "files": ["dist"],
     "exports": {
