@@ -24,8 +24,9 @@ import type {
 import type { Extension } from "@codemirror/state";
 import type { PluginValue, ViewUpdate } from "@codemirror/view";
 import type { Transport } from "@open-rpc/client-js/build/transports/Transport.js";
-import type { PublishDiagnosticsParams } from "vscode-languageserver-protocol";
 import type * as LSP from "vscode-languageserver-protocol";
+import type { PublishDiagnosticsParams } from "vscode-languageserver-protocol";
+import { convertCompletionItem, sortCompletionItems } from "./completion.js";
 import { documentUri, languageId } from "./config.js";
 import {
     eventsFromChangeSet,
@@ -38,7 +39,6 @@ import {
     renderMarkdown,
     showErrorMessage,
 } from "./utils.js";
-import { convertCompletionItem, sortCompletionItems } from "./completion.js";
 
 const TIMEOUT = 10000;
 
@@ -121,6 +121,7 @@ export class LanguageServerClient {
         initializationOptions,
         capabilities,
         timeout = TIMEOUT,
+        getWorkspaceConfiguration,
     }: LanguageServerClientOptions) {
         this.rootUri = rootUri;
         this.workspaceFolders = workspaceFolders;
@@ -141,13 +142,24 @@ export class LanguageServerClient {
 
         const webSocketTransport = this.transport as WebSocketTransport;
         if (webSocketTransport?.connection) {
-            // XXX(hjr265): Need a better way to do this. Relevant issue:
-            // https://github.com/FurqanSoftware/codemirror-languageserver/issues/9
             webSocketTransport.connection.addEventListener(
                 "message",
                 (message: { data: string }) => {
                     const data = JSON.parse(message.data);
-                    if (data.method && data.id) {
+                    if (
+                        data.method === "workspace/configuration" &&
+                        getWorkspaceConfiguration
+                    ) {
+                        webSocketTransport.connection.send(
+                            JSON.stringify({
+                                jsonrpc: "2.0",
+                                id: data.id,
+                                result: getWorkspaceConfiguration(data.params),
+                            }),
+                        );
+                        // XXX(hjr265): Need a better way to do this. Relevant issue:
+                        // https://github.com/FurqanSoftware/codemirror-languageserver/issues/9
+                    } else if (data.method && data.id) {
                         webSocketTransport.connection.send(
                             JSON.stringify({
                                 jsonrpc: "2.0",
@@ -1397,6 +1409,9 @@ interface LanguageServerClientOptions {
           ) => LSP.InitializeParams["capabilities"]);
     /** Additional initialization options to send to the language server */
     initializationOptions?: LSP.InitializeParams["initializationOptions"];
+    getWorkspaceConfiguration?: (
+        params: LSP.ConfigurationParams,
+    ) => LSP.LSPAny[];
 }
 
 /**
