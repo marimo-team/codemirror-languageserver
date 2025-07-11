@@ -1,5 +1,10 @@
 import { autocompletion } from "@codemirror/autocomplete";
-import { type Action, type Diagnostic, setDiagnostics } from "@codemirror/lint";
+import {
+    type Action,
+    type Diagnostic,
+    forEachDiagnostic,
+    setDiagnostics,
+} from "@codemirror/lint";
 import {
     EditorView,
     type Tooltip,
@@ -381,8 +386,13 @@ export class LanguageServerClient {
     }
 }
 
+function uniqueId() {
+    return String(Date.now() + Math.random());
+}
+
 export class LanguageServerPlugin implements PluginValue {
     private documentVersion: number;
+    private pluginId: string;
     public client: LanguageServerClient;
     public documentUri: string;
     public languageId: string;
@@ -403,6 +413,7 @@ export class LanguageServerPlugin implements PluginValue {
         onGoToDefinition?: (result: DefinitionResult) => void,
     ) {
         this.documentVersion = 0;
+        this.pluginId = uniqueId();
         this.client = client;
         this.documentUri = documentUri;
         this.languageId = languageId;
@@ -437,6 +448,8 @@ export class LanguageServerPlugin implements PluginValue {
     }
 
     public destroy() {
+        // Clear diagnostics from this plugin when destroying
+        this.setDiagnosticsForThisPlugin([]);
         this.client.detachPlugin(this);
     }
 
@@ -686,8 +699,8 @@ export class LanguageServerPlugin implements PluginValue {
         // Check if diagnostics are enabled
         const diagEnabled = this.featureOptions.diagnosticsEnabled;
         if (!diagEnabled) {
-            // Clear any existing diagnostics if disabled
-            this.view.dispatch(setDiagnostics(this.view.state, []));
+            // Clear any existing diagnostics from this plugin if disabled
+            this.setDiagnosticsForThisPlugin([]);
             return;
         }
 
@@ -700,7 +713,7 @@ export class LanguageServerPlugin implements PluginValue {
             };
 
         const diagnostics = params.diagnostics.map(
-            async ({ range, message, severity, code }) => {
+            async ({ range, message, severity, code, source }) => {
                 const actions = await this.requestCodeActions(range, [
                     code as string,
                 ]);
@@ -760,7 +773,8 @@ export class LanguageServerPlugin implements PluginValue {
                         dom.innerHTML = renderMarkdown(message);
                         return dom;
                     },
-                    source: this.languageId,
+                    source: source || this.languageId,
+                    markClass: this.pluginId,
                     actions: codemirrorActions,
                 };
 
@@ -769,9 +783,34 @@ export class LanguageServerPlugin implements PluginValue {
         );
 
         const resolvedDiagnostics = await Promise.all(diagnostics);
-        this.view.dispatch(
-            setDiagnostics(this.view.state, resolvedDiagnostics),
-        );
+        this.setDiagnosticsForThisPlugin(resolvedDiagnostics);
+    }
+
+    /**
+     * Sets diagnostics for this plugin only, preserving diagnostics from other plugins
+     * @param newDiagnostics The new diagnostics to set for this plugin
+     */
+    private setDiagnosticsForThisPlugin(newDiagnostics: Diagnostic[]) {
+        const state = this.view.state;
+
+        // Get current diagnostics from the state
+        const otherPluginDiagnostics: Diagnostic[] = [];
+        forEachDiagnostic(state, (diagnostic) => {
+            // Filter out diagnostics from this plugin
+            if (!diagnostic.markClass?.includes(this.pluginId)) {
+                otherPluginDiagnostics.push(diagnostic);
+            }
+            return true;
+        });
+
+        // Combine other plugins' diagnostics with this plugin's new diagnostics
+        const combinedDiagnostics = [
+            ...otherPluginDiagnostics,
+            ...newDiagnostics,
+        ];
+
+        // Set the combined diagnostics
+        this.view.dispatch(setDiagnostics(state, combinedDiagnostics));
     }
 
     private async requestCodeActions(
