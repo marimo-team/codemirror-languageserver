@@ -449,7 +449,7 @@ export class LanguageServerPlugin implements PluginValue {
 
     public destroy() {
         // Clear diagnostics from this plugin when destroying
-        this.setDiagnosticsForThisPlugin([]);
+        this.clearDiagnostics();
         this.client.detachPlugin(this);
     }
 
@@ -700,7 +700,7 @@ export class LanguageServerPlugin implements PluginValue {
         const diagEnabled = this.featureOptions.diagnosticsEnabled;
         if (!diagEnabled) {
             // Clear any existing diagnostics from this plugin if disabled
-            this.setDiagnosticsForThisPlugin([]);
+            this.clearDiagnostics();
             return;
         }
 
@@ -784,6 +784,10 @@ export class LanguageServerPlugin implements PluginValue {
 
         const resolvedDiagnostics = await Promise.all(diagnostics);
         this.setDiagnosticsForThisPlugin(resolvedDiagnostics);
+    }
+
+    private clearDiagnostics() {
+        this.view.dispatch(setDiagnostics(this.view.state, []));
     }
 
     /**
