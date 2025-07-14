@@ -449,7 +449,7 @@ export class LanguageServerPlugin implements PluginValue {
 
     public destroy() {
         // Clear diagnostics from this plugin when destroying
-        this.setDiagnosticsForThisPlugin([]);
+        this.clearDiagnostics();
         this.client.detachPlugin(this);
     }
 
@@ -700,7 +700,7 @@ export class LanguageServerPlugin implements PluginValue {
         const diagEnabled = this.featureOptions.diagnosticsEnabled;
         if (!diagEnabled) {
             // Clear any existing diagnostics from this plugin if disabled
-            this.setDiagnosticsForThisPlugin([]);
+            this.clearDiagnostics();
             return;
         }
 
@@ -786,31 +786,29 @@ export class LanguageServerPlugin implements PluginValue {
         this.setDiagnosticsForThisPlugin(resolvedDiagnostics);
     }
 
+    private clearDiagnostics() {
+        this.view.dispatch(setDiagnostics(this.view.state, []));
+    }
+
     /**
      * Sets diagnostics for this plugin only, preserving diagnostics from other plugins
-     * @param newDiagnostics The new diagnostics to set for this plugin
+     * @param diagnostics The new diagnostics to set for this plugin
      */
-    private setDiagnosticsForThisPlugin(newDiagnostics: Diagnostic[]) {
+    private setDiagnosticsForThisPlugin(diagnostics: Diagnostic[]) {
         const state = this.view.state;
 
-        // Get current diagnostics from the state
-        const otherPluginDiagnostics: Diagnostic[] = [];
         forEachDiagnostic(state, (diagnostic) => {
-            // Filter out diagnostics from this plugin
-            if (!diagnostic.markClass?.includes(this.pluginId)) {
-                otherPluginDiagnostics.push(diagnostic);
+            // Filter out diagnostics from the incoming source
+            const newDiagnosticSource =
+                diagnostics.length > 0 ? diagnostics[0]?.source : undefined;
+
+            if (diagnostic.source !== newDiagnosticSource) {
+                diagnostics.push(diagnostic);
             }
-            return true;
         });
 
-        // Combine other plugins' diagnostics with this plugin's new diagnostics
-        const combinedDiagnostics = [
-            ...otherPluginDiagnostics,
-            ...newDiagnostics,
-        ];
-
         // Set the combined diagnostics
-        this.view.dispatch(setDiagnostics(state, combinedDiagnostics));
+        this.view.dispatch(setDiagnostics(state, diagnostics));
     }
 
     private async requestCodeActions(
