@@ -92,7 +92,7 @@ export function formatContents(
  * @param strs - Array of strings to analyze
  * @returns The longest common prefix string
  */
-function longestCommonPrefix(strs: string[]): string {
+export function longestCommonPrefix(strs: string[]): string {
     if (strs.length === 0) return "";
     if (strs.length === 1) return strs[0] || "";
 

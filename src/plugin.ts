@@ -448,8 +448,6 @@ export class LanguageServerPlugin implements PluginValue {
     }
 
     public destroy() {
-        // Clear diagnostics from this plugin when destroying
-        this.clearDiagnostics();
         this.client.detachPlugin(this);
     }
 

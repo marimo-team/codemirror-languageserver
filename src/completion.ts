@@ -1,8 +1,8 @@
-import type { EditorView } from "@codemirror/view";
 import type { Completion } from "@codemirror/autocomplete";
+import { insertCompletionText, snippet } from "@codemirror/autocomplete";
+import type { EditorView } from "@codemirror/view";
 import type * as LSP from "vscode-languageserver-protocol";
 import { CompletionItemKind } from "vscode-languageserver-protocol";
-import { insertCompletionText, snippet } from "@codemirror/autocomplete";
 import {
     formatContents,
     isEmptyDocumentation,

@@ -21,8 +21,11 @@ class MockTransport extends Transport {
 const transport = new MockTransport();
 
 class MockLanguageServerPlugin extends LanguageServerPlugin {
-    public applyRenameEdit(view: EditorView, edit: WorkspaceEdit | null): Promise<boolean> {
-        return super.applyRenameEdit(view, edit)
+    public applyRenameEdit(
+        view: EditorView,
+        edit: WorkspaceEdit | null,
+    ): Promise<boolean> {
+        return super.applyRenameEdit(view, edit);
     }
 }
 

@@ -1,8 +1,16 @@
-import { describe, it, expect } from "vitest";
-import { prefixMatch } from "./utils";
-import type * as LSP from "vscode-languageserver-protocol";
-import { EditorState } from "@codemirror/state";
 import { CompletionContext } from "@codemirror/autocomplete";
+import { ChangeSet, EditorState, Text } from "@codemirror/state";
+import { describe, expect, it } from "vitest";
+import type * as LSP from "vscode-languageserver-protocol";
+import {
+    eventsFromChangeSet,
+    isEmptyDocumentation,
+    longestCommonPrefix,
+    offsetToPos,
+    posToOffset,
+    posToOffsetOrZero,
+    prefixMatch,
+} from "./utils";
 
 function createItems(labels: string[]): LSP.CompletionItem[] {
     return labels.map((label) => ({ label }));
@@ -239,5 +247,372 @@ describe("prefixMatch", () => {
         expect(createMockContext("obj.function(").matchBefore(pattern)).toEqual(
             null,
         );
+    });
+});
+
+describe("posToOffset", () => {
+    it("should convert position to offset in single line", () => {
+        const doc = Text.of(["hello world"]);
+        expect(posToOffset(doc, { line: 0, character: 0 })).toBe(0);
+        expect(posToOffset(doc, { line: 0, character: 5 })).toBe(5);
+        expect(posToOffset(doc, { line: 0, character: 11 })).toBe(11);
+    });
+
+    it("should convert position to offset in multi-line document", () => {
+        const doc = Text.of(["line1", "line2", "line3"]);
+        expect(posToOffset(doc, { line: 0, character: 0 })).toBe(0);
+        expect(posToOffset(doc, { line: 0, character: 5 })).toBe(5);
+        expect(posToOffset(doc, { line: 1, character: 0 })).toBe(6); // after newline
+        expect(posToOffset(doc, { line: 1, character: 5 })).toBe(11);
+        expect(posToOffset(doc, { line: 2, character: 0 })).toBe(12);
+    });
+
+    it("should handle end of document", () => {
+        const doc = Text.of(["hello"]);
+        expect(posToOffset(doc, { line: 1, character: 0 })).toBe(5);
+    });
+
+    it("should return undefined for invalid line beyond document end", () => {
+        const doc = Text.of(["hello"]);
+        expect(posToOffset(doc, { line: 1, character: 1 })).toBeUndefined(); // Character > 0 on line beyond document
+        expect(posToOffset(doc, { line: 2, character: 0 })).toBe(5); // Line far beyond document but character 0 returns doc.length
+    });
+
+    it("should return undefined for character beyond line length", () => {
+        const doc = Text.of(["hello"]);
+        expect(posToOffset(doc, { line: 0, character: 10 })).toBeUndefined();
+    });
+
+    it("should handle empty document", () => {
+        const doc = Text.of([""]);
+        expect(posToOffset(doc, { line: 0, character: 0 })).toBe(0);
+        expect(posToOffset(doc, { line: 1, character: 0 })).toBe(0);
+        expect(posToOffset(doc, { line: 0, character: 1 })).toBeUndefined();
+    });
+
+    it("should handle empty lines", () => {
+        const doc = Text.of(["", "hello", ""]);
+        expect(posToOffset(doc, { line: 0, character: 0 })).toBe(0);
+        expect(posToOffset(doc, { line: 1, character: 0 })).toBe(1);
+        expect(posToOffset(doc, { line: 1, character: 5 })).toBe(6);
+        expect(posToOffset(doc, { line: 2, character: 0 })).toBe(7);
+    });
+});
+
+describe("offsetToPos", () => {
+    it("should convert offset to position in single line", () => {
+        const doc = Text.of(["hello world"]);
+        expect(offsetToPos(doc, 0)).toEqual({ line: 0, character: 0 });
+        expect(offsetToPos(doc, 5)).toEqual({ line: 0, character: 5 });
+        expect(offsetToPos(doc, 11)).toEqual({ line: 0, character: 11 });
+    });
+
+    it("should convert offset to position in multi-line document", () => {
+        const doc = Text.of(["line1", "line2", "line3"]);
+        expect(offsetToPos(doc, 0)).toEqual({ line: 0, character: 0 });
+        expect(offsetToPos(doc, 5)).toEqual({ line: 0, character: 5 });
+        expect(offsetToPos(doc, 6)).toEqual({ line: 1, character: 0 });
+        expect(offsetToPos(doc, 11)).toEqual({ line: 1, character: 5 });
+        expect(offsetToPos(doc, 12)).toEqual({ line: 2, character: 0 });
+    });
+
+    it("should handle end of document", () => {
+        const doc = Text.of(["hello"]);
+        expect(offsetToPos(doc, 5)).toEqual({ line: 0, character: 5 });
+    });
+
+    it("should handle empty document", () => {
+        const doc = Text.of([""]);
+        expect(offsetToPos(doc, 0)).toEqual({ line: 0, character: 0 });
+    });
+
+    it("should handle empty lines", () => {
+        const doc = Text.of(["", "hello", ""]);
+        expect(offsetToPos(doc, 0)).toEqual({ line: 0, character: 0 });
+        expect(offsetToPos(doc, 1)).toEqual({ line: 1, character: 0 });
+        expect(offsetToPos(doc, 6)).toEqual({ line: 1, character: 5 });
+        expect(offsetToPos(doc, 7)).toEqual({ line: 2, character: 0 });
+    });
+
+    it("should be inverse of posToOffset", () => {
+        const doc = Text.of(["line1", "line2", "line3"]);
+        const positions = [
+            { line: 0, character: 0 },
+            { line: 0, character: 3 },
+            { line: 1, character: 0 },
+            { line: 1, character: 2 },
+            { line: 2, character: 5 },
+        ];
+
+        for (const pos of positions) {
+            const offset = posToOffset(doc, pos);
+            if (offset !== undefined) {
+                expect(offsetToPos(doc, offset)).toEqual(pos);
+            }
+        }
+    });
+});
+
+describe("posToOffsetOrZero", () => {
+    it("should return offset when position is valid", () => {
+        const doc = Text.of(["hello world"]);
+        expect(posToOffsetOrZero(doc, { line: 0, character: 5 })).toBe(5);
+    });
+
+    it("should return zero when position is invalid", () => {
+        const doc = Text.of(["hello"]);
+        expect(posToOffsetOrZero(doc, { line: 0, character: 10 })).toBe(0);
+        expect(posToOffsetOrZero(doc, { line: 1, character: 5 })).toBe(0);
+    });
+});
+
+describe("isEmptyDocumentation", () => {
+    it("should return true for null/undefined", () => {
+        expect(isEmptyDocumentation(null)).toBe(true);
+        expect(isEmptyDocumentation(undefined)).toBe(true);
+    });
+
+    it("should return true for empty string", () => {
+        expect(isEmptyDocumentation("")).toBe(true);
+        expect(isEmptyDocumentation("   ")).toBe(true);
+        expect(isEmptyDocumentation("\n\t  ")).toBe(true);
+    });
+
+    it("should return true for strings with only backticks", () => {
+        expect(isEmptyDocumentation("`")).toBe(true);
+        expect(isEmptyDocumentation("```")).toBe(true);
+        expect(isEmptyDocumentation(" ` \n `  ")).toBe(true);
+    });
+
+    it("should return false for non-empty strings", () => {
+        expect(isEmptyDocumentation("Hello")).toBe(false);
+        expect(isEmptyDocumentation("   text   ")).toBe(false);
+        expect(isEmptyDocumentation("`code`")).toBe(false);
+    });
+
+    it("should handle MarkupContent", () => {
+        expect(isEmptyDocumentation({ kind: "markdown", value: "" })).toBe(
+            true,
+        );
+        expect(isEmptyDocumentation({ kind: "markdown", value: "   " })).toBe(
+            true,
+        );
+        expect(isEmptyDocumentation({ kind: "markdown", value: "Hello" })).toBe(
+            false,
+        );
+        expect(isEmptyDocumentation({ kind: "plaintext", value: "Text" })).toBe(
+            false,
+        );
+    });
+
+    it("should handle array of MarkedString", () => {
+        expect(isEmptyDocumentation([])).toBe(true);
+        expect(isEmptyDocumentation(["", "   "])).toBe(true);
+        expect(isEmptyDocumentation(["Hello"])).toBe(false);
+        expect(isEmptyDocumentation(["", "World"])).toBe(false);
+        expect(isEmptyDocumentation([{ language: "js", value: "" }])).toBe(
+            true,
+        );
+        expect(isEmptyDocumentation([{ language: "js", value: "code" }])).toBe(
+            false,
+        );
+    });
+
+    it("should handle mixed array content", () => {
+        expect(
+            isEmptyDocumentation(["Hello", { language: "js", value: "code" }]),
+        ).toBe(false);
+        expect(isEmptyDocumentation(["", { language: "js", value: "" }])).toBe(
+            true,
+        );
+    });
+});
+
+describe("eventsFromChangeSet", () => {
+    it("should handle full document replacement", () => {
+        const doc = Text.of(["old content"]);
+        const changes = ChangeSet.of(
+            [{ from: 0, to: doc.length, insert: "new content" }],
+            doc.length,
+        );
+        const events = eventsFromChangeSet(doc, changes);
+
+        expect(events).toHaveLength(1);
+        expect(events[0]).toEqual({
+            text: "new content",
+        });
+    });
+
+    it("should handle incremental changes", () => {
+        const doc = Text.of(["hello world"]);
+        const changes = ChangeSet.of(
+            [{ from: 0, to: 5, insert: "Hi" }],
+            doc.length,
+        );
+        const events = eventsFromChangeSet(doc, changes);
+
+        expect(events).toHaveLength(1);
+        expect(events[0]).toEqual({
+            range: {
+                start: { line: 0, character: 0 },
+                end: { line: 0, character: 5 },
+            },
+            text: "Hi",
+        });
+    });
+
+    it("should handle insertions", () => {
+        const doc = Text.of(["hello world"]);
+        const changes = ChangeSet.of(
+            [{ from: 6, to: 6, insert: "beautiful " }],
+            doc.length,
+        );
+        const events = eventsFromChangeSet(doc, changes);
+
+        expect(events).toHaveLength(1);
+        expect(events[0]).toEqual({
+            range: {
+                start: { line: 0, character: 6 },
+                end: { line: 0, character: 6 },
+            },
+            text: "beautiful ",
+        });
+    });
+
+    it("should handle deletions", () => {
+        const doc = Text.of(["hello world"]);
+        const changes = ChangeSet.of(
+            [{ from: 6, to: 11, insert: "" }],
+            doc.length,
+        );
+        const events = eventsFromChangeSet(doc, changes);
+
+        expect(events).toHaveLength(1);
+        expect(events[0]).toEqual({
+            range: {
+                start: { line: 0, character: 6 },
+                end: { line: 0, character: 11 },
+            },
+            text: "",
+        });
+    });
+
+    it("should handle multi-line changes", () => {
+        const doc = Text.of(["line1", "line2", "line3"]);
+        const changes = ChangeSet.of(
+            [{ from: 6, to: 12, insert: "NEW LINE" }],
+            doc.length,
+        );
+        const events = eventsFromChangeSet(doc, changes);
+
+        expect(events).toHaveLength(1);
+        expect(events[0]).toEqual({
+            range: {
+                start: { line: 1, character: 0 },
+                end: { line: 2, character: 0 },
+            },
+            text: "NEW LINE",
+        });
+    });
+
+    it("should handle empty document", () => {
+        const doc = Text.of([""]);
+        const changes = ChangeSet.of(
+            [{ from: 0, to: 0, insert: "content" }],
+            doc.length,
+        );
+        const events = eventsFromChangeSet(doc, changes);
+
+        expect(events).toHaveLength(1);
+        expect(events[0]).toEqual({
+            text: "content",
+        });
+    });
+});
+
+describe("longestCommonPrefix", () => {
+    it("should return empty string for empty array", () => {
+        expect(longestCommonPrefix([])).toBe("");
+    });
+
+    it("should return the string itself for single element array", () => {
+        expect(longestCommonPrefix(["hello"])).toBe("hello");
+        expect(longestCommonPrefix([""])).toBe("");
+    });
+
+    it("should return empty string when no common prefix", () => {
+        expect(longestCommonPrefix(["apple", "banana", "cherry"])).toBe("");
+        expect(longestCommonPrefix(["abc", "def"])).toBe("");
+    });
+
+    it("should find common prefix for multiple strings", () => {
+        expect(
+            longestCommonPrefix(["prefix_one", "prefix_two", "prefix_three"]),
+        ).toBe("prefix_");
+        expect(longestCommonPrefix(["hello", "help", "helmet"])).toBe("hel");
+    });
+
+    it("should find full common prefix when strings start the same", () => {
+        expect(longestCommonPrefix(["test", "test"])).toBe("test");
+        expect(longestCommonPrefix(["abc", "abc", "abc"])).toBe("abc");
+    });
+
+    it("should handle case where one string is prefix of another", () => {
+        expect(longestCommonPrefix(["test", "testing", "tester"])).toBe("test");
+        expect(longestCommonPrefix(["a", "abc", "ab"])).toBe("a");
+    });
+
+    it("should handle empty strings in array", () => {
+        expect(longestCommonPrefix(["", "hello", "help"])).toBe("");
+        expect(longestCommonPrefix(["hello", "", "help"])).toBe("");
+    });
+
+    it("should handle special characters", () => {
+        expect(
+            longestCommonPrefix(["user.name", "user.email", "user.id"]),
+        ).toBe("user.");
+        expect(longestCommonPrefix(["$var1", "$var2", "$var3"])).toBe("$var");
+    });
+
+    it("should handle single character differences", () => {
+        expect(longestCommonPrefix(["a", "b"])).toBe("");
+        expect(longestCommonPrefix(["aa", "ab"])).toBe("a");
+    });
+
+    it("should handle mixed case properly", () => {
+        expect(longestCommonPrefix(["Hello", "hello"])).toBe("");
+        expect(longestCommonPrefix(["TEST", "Test"])).toBe("T");
+    });
+
+    it("should work with file paths", () => {
+        expect(
+            longestCommonPrefix([
+                "src/utils.ts",
+                "src/index.ts",
+                "src/plugin.ts",
+            ]),
+        ).toBe("src/");
+        expect(
+            longestCommonPrefix(["/path/to/file1.txt", "/path/to/file2.txt"]),
+        ).toBe("/path/to/file");
+    });
+
+    it("should handle undefined/null values gracefully", () => {
+        expect(longestCommonPrefix(["test", null as any])).toBe("");
+        expect(longestCommonPrefix(["test", undefined as any])).toBe("");
+    });
+
+    it("should be stable regardless of input order", () => {
+        const strings1 = ["abc", "abcd", "ab"];
+        const strings2 = ["abcd", "ab", "abc"];
+        const strings3 = ["ab", "abc", "abcd"];
+
+        const result1 = longestCommonPrefix(strings1);
+        const result2 = longestCommonPrefix(strings2);
+        const result3 = longestCommonPrefix(strings3);
+
+        expect(result1).toBe("ab");
+        expect(result2).toBe("ab");
+        expect(result3).toBe("ab");
     });
 });

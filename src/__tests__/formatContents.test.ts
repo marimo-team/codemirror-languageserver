@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { formatContents } from "../utils";
 import type * as LSP from "vscode-languageserver-protocol";
+import { formatContents } from "../utils";
 
 describe("formatContents", () => {
     it("returns empty string for undefined input", () => {

@@ -1,7 +1,7 @@
-import { describe, it, expect, vi } from "vitest";
-import { convertCompletionItem, convertSnippet } from "../completion.js";
+import { describe, expect, it, vi } from "vitest";
 import type * as LSP from "vscode-languageserver-protocol";
 import { CompletionItemKind } from "vscode-languageserver-protocol";
+import { convertCompletionItem, convertSnippet } from "../completion.js";
 import { sortCompletionItems } from "../completion.js";
 
 describe("convertCompletionItem", () => {
