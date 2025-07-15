@@ -528,7 +528,7 @@ export class LanguageServerPlugin implements PluginValue {
             return null;
         }
         const dom = document.createElement("div");
-        dom.classList.add("documentation");
+        dom.classList.add("documentation cm-lsp-hover-tooltip");
         if (this.allowHTMLContent) {
             dom.innerHTML = formatContents(contents);
         } else {
