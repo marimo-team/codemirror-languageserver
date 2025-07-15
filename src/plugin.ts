@@ -691,9 +691,20 @@ export class LanguageServerPlugin implements PluginValue {
         }
     }
 
+    private lastSeenDiagnosticsVersion = 0;
+
     public async processDiagnostics(params: PublishDiagnosticsParams) {
         if (params.uri !== this.documentUri) {
             return;
+        }
+
+        // If the version is newer, clear the diagnostics and update the last seen version
+        if (
+            params.version != null &&
+            params.version > this.lastSeenDiagnosticsVersion
+        ) {
+            this.lastSeenDiagnosticsVersion = params.version;
+            this.setDiagnosticsForThisPlugin([]);
         }
 
         // Check if diagnostics are enabled
