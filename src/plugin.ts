@@ -449,7 +449,7 @@ export class LanguageServerPlugin implements PluginValue {
 
     public destroy() {
         // Clear diagnostics from this plugin when destroying
-        this.setDiagnosticsForThisPlugin([]);
+        this.clearDiagnostics();
         this.client.detachPlugin(this);
     }
 
@@ -528,7 +528,7 @@ export class LanguageServerPlugin implements PluginValue {
             return null;
         }
         const dom = document.createElement("div");
-        dom.classList.add("documentation");
+        dom.classList.add("documentation cm-lsp-hover-tooltip");
         if (this.allowHTMLContent) {
             dom.innerHTML = formatContents(contents);
         } else {
@@ -704,14 +704,14 @@ export class LanguageServerPlugin implements PluginValue {
             params.version > this.lastSeenDiagnosticsVersion
         ) {
             this.lastSeenDiagnosticsVersion = params.version;
-            this.setDiagnosticsForThisPlugin([]);
+            this.clearDiagnostics();
         }
 
         // Check if diagnostics are enabled
         const diagEnabled = this.featureOptions.diagnosticsEnabled;
         if (!diagEnabled) {
             // Clear any existing diagnostics from this plugin if disabled
-            this.setDiagnosticsForThisPlugin([]);
+            this.clearDiagnostics();
             return;
         }
 
@@ -794,34 +794,29 @@ export class LanguageServerPlugin implements PluginValue {
         );
 
         const resolvedDiagnostics = await Promise.all(diagnostics);
-        this.setDiagnosticsForThisPlugin(resolvedDiagnostics);
+        this.addDiagnostics(resolvedDiagnostics);
     }
 
     /**
-     * Sets diagnostics for this plugin only, preserving diagnostics from other plugins
-     * @param newDiagnostics The new diagnostics to set for this plugin
+     * Adds diagnostics to the current state
      */
-    private setDiagnosticsForThisPlugin(newDiagnostics: Diagnostic[]) {
+    private addDiagnostics(newDiagnostics: Diagnostic[]) {
         const state = this.view.state;
 
         // Get current diagnostics from the state
-        const otherPluginDiagnostics: Diagnostic[] = [];
+        const diagnostics: Diagnostic[] = [];
         forEachDiagnostic(state, (diagnostic) => {
-            // Filter out diagnostics from this plugin
-            if (!diagnostic.markClass?.includes(this.pluginId)) {
-                otherPluginDiagnostics.push(diagnostic);
-            }
+            diagnostics.push(diagnostic);
             return true;
         });
 
-        // Combine other plugins' diagnostics with this plugin's new diagnostics
-        const combinedDiagnostics = [
-            ...otherPluginDiagnostics,
-            ...newDiagnostics,
-        ];
+        this.view.dispatch(
+            setDiagnostics(state, [...diagnostics, ...newDiagnostics]),
+        );
+    }
 
-        // Set the combined diagnostics
-        this.view.dispatch(setDiagnostics(state, combinedDiagnostics));
+    private clearDiagnostics() {
+        this.view.dispatch(setDiagnostics(this.view.state, []));
     }
 
     private async requestCodeActions(
