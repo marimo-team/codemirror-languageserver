@@ -1451,7 +1451,7 @@ export class LanguageServerPlugin implements PluginValue {
 /**
  * Options for configuring the language server client
  */
-interface LanguageServerClientOptions {
+export interface LanguageServerClientOptions {
     /** The root URI of the workspace, used for LSP initialization */
     rootUri: string;
     /** List of workspace folders to send to the language server */

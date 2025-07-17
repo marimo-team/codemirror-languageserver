@@ -5,6 +5,19 @@ export default defineConfig({
     test: {
         globals: true,
         environment: "jsdom",
+        coverage: {
+            enabled: false, // Enable explicitly with --coverage flag
+            reporter: ["text", "json", "html"],
+            exclude: [
+                "coverage/**",
+                "dist/**",
+                "demo/**",
+                "**/*.d.ts",
+                "**/*.test.ts",
+                "vite.config.ts",
+            ],
+            include: ["src/**/*.ts"],
+        },
     },
     base: "/codemirror-languageserver/",
 });
