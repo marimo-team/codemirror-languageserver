@@ -397,21 +397,35 @@ export class LanguageServerPlugin implements PluginValue {
     public documentUri: string;
     public languageId: string;
     public view: EditorView;
-    public allowHTMLContent = false;
+    public allowHTMLContent: boolean;
+    public useSnippetOnCompletion: boolean;
     public sendIncrementalChanges: boolean;
     public featureOptions: Required<FeatureOptions>;
     public onGoToDefinition: ((result: DefinitionResult) => void) | undefined;
 
-    constructor(
-        client: LanguageServerClient,
-        documentUri: string,
-        languageId: string,
-        view: EditorView,
-        featureOptions: Required<FeatureOptions>,
-        sendIncrementalChanges = true,
-        allowHTMLContent = false,
-        onGoToDefinition?: (result: DefinitionResult) => void,
-    ) {
+    constructor(opts: {
+        client: LanguageServerClient;
+        documentUri: string;
+        languageId: string;
+        view: EditorView;
+        featureOptions: Required<FeatureOptions>;
+        sendIncrementalChanges?: boolean;
+        allowHTMLContent?: boolean;
+        useSnippetOnCompletion?: boolean;
+        onGoToDefinition?: (result: DefinitionResult) => void;
+    }) {
+        const {
+            client,
+            documentUri,
+            languageId,
+            view,
+            featureOptions,
+            sendIncrementalChanges = true,
+            allowHTMLContent = false,
+            useSnippetOnCompletion = false,
+            onGoToDefinition,
+        } = opts;
+
         this.documentVersion = 0;
         this.pluginId = uniqueId();
         this.client = client;
@@ -419,6 +433,7 @@ export class LanguageServerPlugin implements PluginValue {
         this.languageId = languageId;
         this.view = view;
         this.allowHTMLContent = allowHTMLContent;
+        this.useSnippetOnCompletion = useSnippetOnCompletion;
         this.sendIncrementalChanges = sendIncrementalChanges;
         this.featureOptions = featureOptions;
         this.onGoToDefinition = onGoToDefinition;
@@ -601,6 +616,7 @@ export class LanguageServerPlugin implements PluginValue {
         const options = sortedItems.map((item) => {
             return convertCompletionItem(item, {
                 allowHTMLContent: this.allowHTMLContent,
+                useSnippetOnCompletion: this.useSnippetOnCompletion,
                 hasResolveProvider:
                     this.client.capabilities?.completionProvider
                         ?.resolveProvider ?? false,
@@ -1529,6 +1545,8 @@ interface LanguageServerOptions extends FeatureOptions {
     client: LanguageServerClient;
     /** Whether to allow HTML content in hover tooltips and other UI elements */
     allowHTMLContent?: boolean;
+    /** Whether to prefer snippet insertion for completions when available */
+    useSnippetOnCompletion?: boolean;
     /** URI of the current document being edited. If not provided, must be passed via the documentUri facet. */
     documentUri?: string;
     /** Language identifier (e.g., 'typescript', 'javascript', etc.). If not provided, must be passed via the languageId facet. */
@@ -1612,16 +1630,18 @@ export function languageServerWithClient(options: LanguageServerOptions) {
     // Create base extensions array
     const extensions: Extension[] = [
         ViewPlugin.define((view) => {
-            plugin = new LanguageServerPlugin(
-                lsClient,
-                options.documentUri ?? view.state.facet(documentUri),
-                options.languageId ?? view.state.facet(languageId),
+            plugin = new LanguageServerPlugin({
+                client: lsClient,
+                documentUri:
+                    options.documentUri ?? view.state.facet(documentUri),
+                languageId: options.languageId ?? view.state.facet(languageId),
                 view,
-                featuresOptions,
-                options.sendIncrementalChanges ?? true,
-                options.allowHTMLContent ?? false,
-                options.onGoToDefinition,
-            );
+                featureOptions: featuresOptions,
+                sendIncrementalChanges: options.sendIncrementalChanges,
+                allowHTMLContent: options.allowHTMLContent,
+                useSnippetOnCompletion: options.useSnippetOnCompletion,
+                onGoToDefinition: options.onGoToDefinition,
+            });
             return plugin;
         }),
     ];

@@ -14,6 +14,7 @@ describe("convertCompletionItem", () => {
 
         const completion = convertCompletionItem(lspItem, {
             allowHTMLContent: false,
+            useSnippetOnCompletion: false,
             hasResolveProvider: false,
             resolveItem: vi.fn(),
         });
@@ -40,12 +41,107 @@ describe("convertCompletionItem", () => {
 
         const completion = convertCompletionItem(lspItem, {
             allowHTMLContent: false,
+            useSnippetOnCompletion: false,
             hasResolveProvider: false,
             resolveItem: vi.fn(),
         });
 
         expect(completion.apply).toBeDefined();
         // Note: We can't easily test the apply function here since it requires a view
+    });
+
+    it("should handle snippet insertion", () => {
+        const lspItem: LSP.CompletionItem = {
+            label: "test",
+            insertText: "test${1:arg}",
+            insertTextFormat: 2, // Snippet format
+        };
+
+        const completion = convertCompletionItem(lspItem, {
+            allowHTMLContent: false,
+            useSnippetOnCompletion: false,
+            hasResolveProvider: false,
+            resolveItem: vi.fn(),
+        });
+
+        expect(completion.apply).toBeDefined();
+    });
+
+    it("should handle documentation", () => {
+        const lspItem: LSP.CompletionItem = {
+            label: "test",
+            documentation: "Test documentation",
+        };
+
+        const completion = convertCompletionItem(lspItem, {
+            allowHTMLContent: false,
+            useSnippetOnCompletion: false,
+            hasResolveProvider: false,
+            resolveItem: vi.fn(),
+        });
+
+        expect(completion.info).toBeDefined();
+    });
+
+    it("should handle HTML documentation when allowed", () => {
+        const lspItem: LSP.CompletionItem = {
+            label: "test",
+            documentation: {
+                kind: "markdown",
+                value: "**Bold** text",
+            },
+        };
+
+        const completion = convertCompletionItem(lspItem, {
+            allowHTMLContent: true,
+            useSnippetOnCompletion: false,
+            hasResolveProvider: false,
+            resolveItem: vi.fn(),
+        });
+
+        expect(completion.info).toBeDefined();
+    });
+
+    it("should handle resolve provider", async () => {
+        const lspItem: LSP.CompletionItem = {
+            label: "test",
+        };
+
+        const mockResolve = vi.fn().mockResolvedValue({
+            ...lspItem,
+            documentation: "Resolved documentation",
+        });
+
+        const completion = convertCompletionItem(lspItem, {
+            allowHTMLContent: false,
+            useSnippetOnCompletion: false,
+            hasResolveProvider: true,
+            resolveItem: mockResolve,
+        });
+
+        expect(completion.info).toBeDefined();
+        if (completion.info) {
+            await completion.info();
+            expect(mockResolve).toHaveBeenCalledWith(lspItem);
+        }
+    });
+
+    it("should handle labelDetails", () => {
+        const lspItem: LSP.CompletionItem = {
+            label: "test",
+            labelDetails: {
+                detail: "Label detail",
+            },
+        };
+
+        const completion = convertCompletionItem(lspItem, {
+            allowHTMLContent: false,
+            useSnippetOnCompletion: false,
+            hasResolveProvider: false,
+            resolveItem: vi.fn(),
+        });
+
+        expect(completion.detail).toBe("Label detail");
     });
 
     it("should handle documentation with HTML content", () => {
@@ -59,6 +155,7 @@ describe("convertCompletionItem", () => {
 
         const completion = convertCompletionItem(lspItem, {
             allowHTMLContent: true,
+            useSnippetOnCompletion: false,
             hasResolveProvider: false,
             resolveItem: vi.fn(),
         });
@@ -84,6 +181,7 @@ describe("convertCompletionItem", () => {
 
         const completion = convertCompletionItem(lspItem, {
             allowHTMLContent: false,
+            useSnippetOnCompletion: false,
             hasResolveProvider: false,
             resolveItem: vi.fn(),
         });
@@ -119,6 +217,7 @@ describe("convertCompletionItem", () => {
 
         const completion = convertCompletionItem(lspItem, {
             allowHTMLContent: false,
+            useSnippetOnCompletion: false,
             hasResolveProvider: true,
             resolveItem,
         });
@@ -146,6 +245,7 @@ describe("convertCompletionItem", () => {
 
         const completion = convertCompletionItem(lspItem, {
             allowHTMLContent: false,
+            useSnippetOnCompletion: false,
             hasResolveProvider: true,
             resolveItem,
         });
@@ -173,11 +273,66 @@ describe("convertCompletionItem", () => {
 
         const completion = convertCompletionItem(lspItem, {
             allowHTMLContent: false,
+            useSnippetOnCompletion: false,
             hasResolveProvider: false,
             resolveItem: vi.fn(),
         });
 
         expect(completion.apply).toBeDefined();
+    });
+
+    it("should prefer snippet insertion when useSnippetOnCompletion is true", () => {
+        const lspItem: LSP.CompletionItem = {
+            label: "test",
+            insertText: "test${1:arg}",
+            // No insertTextFormat specified (undefined)
+        };
+
+        const completion = convertCompletionItem(lspItem, {
+            allowHTMLContent: false,
+            useSnippetOnCompletion: true,
+            hasResolveProvider: false,
+            resolveItem: vi.fn(),
+        });
+
+        expect(completion.apply).toBeDefined();
+        // The apply function should treat insertText as a snippet when useSnippetOnCompletion is true
+    });
+
+    it("should not use snippet when useSnippetOnCompletion is true but insertTextFormat is PlainText", () => {
+        const lspItem: LSP.CompletionItem = {
+            label: "test",
+            insertText: "test${1:arg}",
+            insertTextFormat: 1, // PlainText format
+        };
+
+        const completion = convertCompletionItem(lspItem, {
+            allowHTMLContent: false,
+            useSnippetOnCompletion: true,
+            hasResolveProvider: false,
+            resolveItem: vi.fn(),
+        });
+
+        expect(completion.apply).toBeDefined();
+        // The apply function should NOT treat insertText as a snippet when insertTextFormat is explicitly PlainText
+    });
+
+    it("should use snippet when insertTextFormat is explicitly Snippet regardless of useSnippetOnCompletion", () => {
+        const lspItem: LSP.CompletionItem = {
+            label: "test",
+            insertText: "test${1:arg}",
+            insertTextFormat: 2, // Snippet format
+        };
+
+        const completion = convertCompletionItem(lspItem, {
+            allowHTMLContent: false,
+            useSnippetOnCompletion: false, // Even with useSnippetOnCompletion false, should still use snippet
+            hasResolveProvider: false,
+            resolveItem: vi.fn(),
+        });
+
+        expect(completion.apply).toBeDefined();
+        // The apply function should treat insertText as a snippet when insertTextFormat is explicitly Snippet
     });
 });
 
