@@ -298,13 +298,13 @@ it("applies rename changes correctly to a document", async () => {
         });
 
     // Create a mock plugin with access to the rename functionality
-    const mockPlugin = new MockLanguageServerPlugin(
-        client,
-        "file:///root/file.ts",
-        "typescript",
-        mockView,
-        featuresOptions,
-    );
+    const mockPlugin = new MockLanguageServerPlugin({
+        client: client,
+        documentUri: "file:///root/file.ts",
+        languageId: "typescript",
+        view: mockView,
+        featureOptions: featuresOptions,
+    });
 
     // Set capabilities to include rename support
     client.capabilities = {
@@ -371,13 +371,13 @@ it("applies rename the whole cell", async () => {
     });
 
     // Create a mock plugin with access to the rename functionality
-    const mockPlugin = new MockLanguageServerPlugin(
+    const mockPlugin = new MockLanguageServerPlugin({
         client,
-        "file:///root/file.ts",
-        "typescript",
-        mockView,
-        featuresOptions,
-    );
+        documentUri: "file:///root/file.ts",
+        languageId: "typescript",
+        view: mockView,
+        featureOptions: featuresOptions,
+    });
 
     // Set capabilities to include rename support
     client.capabilities = {
@@ -415,13 +415,13 @@ it("handles prepareRenameFallback", async () => {
         workspaceFolders: [{ uri: "file:///root", name: "root" }],
     });
 
-    const plugin = new MockLanguageServerPlugin(
+    const plugin = new MockLanguageServerPlugin({
         client,
-        "file:///root/file.ts",
-        "typescript",
-        mockView,
-        featuresOptions,
-    );
+        documentUri: "file:///root/file.ts",
+        languageId: "typescript",
+        view: mockView,
+        featureOptions: featuresOptions,
+    });
 
     const prepare = (opts: { line: number; character: number }) => {
         // biome-ignore lint/suspicious/noExplicitAny: private method

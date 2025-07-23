@@ -1,6 +1,6 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, it } from "vitest";
 import { EditorState } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
+import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { LanguageServerClient, LanguageServerPlugin } from "../plugin.js";
 import type { FeatureOptions } from "../plugin.js";
 import type { Transport } from "@open-rpc/client-js/build/transports/Transport.js";
@@ -28,7 +28,8 @@ vi.mock("../utils.js", () => ({
     prefixMatch: vi.fn().mockReturnValue(undefined),
     formatContents: vi.fn().mockImplementation((contents) => {
         if (typeof contents === "string") return contents;
-        if (typeof contents === "object" && contents.value) return contents.value;
+        if (typeof contents === "object" && contents.value)
+            return contents.value;
         return String(contents);
     }),
     isEmptyDocumentation: vi.fn().mockImplementation((contents) => {
@@ -145,19 +146,20 @@ describe("LanguageServerPlugin", () => {
 
     describe("constructor", () => {
         it("should initialize with default values", async () => {
-            const plugin = new LanguageServerPlugin(
-                mockClient,
-                "file:///test.ts",
-                "typescript",
-                mockView,
+            const plugin = new LanguageServerPlugin({
+                client: mockClient,
+                documentUri: "file:///test.ts",
+                languageId: "typescript",
+                view: mockView,
                 featureOptions,
-            );
+            });
 
             expect(plugin.client).toBe(mockClient);
             expect(plugin.documentUri).toBe("file:///test.ts");
             expect(plugin.languageId).toBe("typescript");
             expect(plugin.view).toBe(mockView);
             expect(plugin.allowHTMLContent).toBe(false);
+            expect(plugin.useSnippetOnCompletion).toBe(false);
             expect(plugin.sendIncrementalChanges).toBe(true);
             expect(plugin.featureOptions).toBe(featureOptions);
             expect(plugin.onGoToDefinition).toBeUndefined();
@@ -174,22 +176,40 @@ describe("LanguageServerPlugin", () => {
         it("should initialize with custom options", () => {
             const onGoToDefinition = vi.fn();
 
-            const plugin = new LanguageServerPlugin(
-                mockClient,
-                "file:///test.py",
-                "python",
-                mockView,
+            const plugin = new LanguageServerPlugin({
+                client: mockClient,
+                documentUri: "file:///test.py",
+                languageId: "python",
+                view: mockView,
                 featureOptions,
-                false, // sendIncrementalChanges
-                true, // allowHTMLContent
+                sendIncrementalChanges: false,
+                allowHTMLContent: true,
+                useSnippetOnCompletion: false,
                 onGoToDefinition,
-            );
+            });
 
             expect(plugin.documentUri).toBe("file:///test.py");
             expect(plugin.languageId).toBe("python");
             expect(plugin.allowHTMLContent).toBe(true);
+            expect(plugin.useSnippetOnCompletion).toBe(false);
             expect(plugin.sendIncrementalChanges).toBe(false);
             expect(plugin.onGoToDefinition).toBe(onGoToDefinition);
+        });
+
+        it("should initialize with useSnippetOnCompletion option", () => {
+            const plugin = new LanguageServerPlugin({
+                client: mockClient,
+                documentUri: "file:///test.js",
+                languageId: "javascript",
+                view: mockView,
+                featureOptions,
+                sendIncrementalChanges: true,
+                allowHTMLContent: false,
+                useSnippetOnCompletion: true,
+            });
+
+            expect(plugin.useSnippetOnCompletion).toBe(true);
+            expect(plugin.allowHTMLContent).toBe(false);
         });
     });
 
@@ -197,13 +217,13 @@ describe("LanguageServerPlugin", () => {
         let plugin: LanguageServerPlugin;
 
         beforeEach(() => {
-            plugin = new LanguageServerPlugin(
-                mockClient,
-                "file:///test.ts",
-                "typescript",
-                mockView,
+            plugin = new LanguageServerPlugin({
+                client: mockClient,
+                documentUri: "file:///test.ts",
+                languageId: "typescript",
+                view: mockView,
                 featureOptions,
-            );
+            });
 
             // Reset mocks after initialization
             vi.clearAllMocks();
@@ -220,9 +240,9 @@ describe("LanguageServerPlugin", () => {
             plugin.update({
                 state: EditorState.create({ doc: "hello world" }),
                 docChanged: true,
-                startState: { doc: mockView.state.doc },
-                changes: mockChanges as any,
-            } as any);
+                startState: EditorState.create({ doc: mockView.state.doc }),
+                changes: mockChanges as unknown as ViewUpdate["changes"],
+            } as ViewUpdate);
 
             expect(mockClient.textDocumentDidChange).toHaveBeenCalled();
         });
@@ -235,9 +255,9 @@ describe("LanguageServerPlugin", () => {
             plugin.update({
                 state: newState,
                 docChanged: true,
-                startState: { doc: mockView.state.doc },
-                changes: {} as any,
-            } as any);
+                startState: EditorState.create({ doc: mockView.state.doc }),
+                changes: {} as unknown as ViewUpdate["changes"],
+            } as ViewUpdate);
 
             expect(mockClient.textDocumentDidChange).toHaveBeenCalledWith({
                 textDocument: {
@@ -252,9 +272,9 @@ describe("LanguageServerPlugin", () => {
             plugin.update({
                 state: mockView.state,
                 docChanged: false,
-                startState: { doc: mockView.state.doc },
-                changes: {} as any,
-            } as any);
+                startState: EditorState.create({ doc: mockView.state.doc }),
+                changes: {} as unknown as ViewUpdate["changes"],
+            } as ViewUpdate);
 
             expect(mockClient.textDocumentDidChange).not.toHaveBeenCalled();
         });
@@ -262,13 +282,13 @@ describe("LanguageServerPlugin", () => {
 
     describe("destroy", () => {
         it("should detach plugin from client", () => {
-            const plugin = new LanguageServerPlugin(
-                mockClient,
-                "file:///test.ts",
-                "typescript",
-                mockView,
+            const plugin = new LanguageServerPlugin({
+                client: mockClient,
+                documentUri: "file:///test.ts",
+                languageId: "typescript",
+                view: mockView,
                 featureOptions,
-            );
+            });
 
             plugin.destroy();
 
@@ -280,13 +300,13 @@ describe("LanguageServerPlugin", () => {
         let plugin: LanguageServerPlugin;
 
         beforeEach(() => {
-            plugin = new LanguageServerPlugin(
-                mockClient,
-                "file:///test.ts",
-                "typescript",
-                mockView,
+            plugin = new LanguageServerPlugin({
+                client: mockClient,
+                documentUri: "file:///test.ts",
+                languageId: "typescript",
+                view: mockView,
                 featureOptions,
-            );
+            });
 
             vi.clearAllMocks();
         });
@@ -343,13 +363,13 @@ describe("LanguageServerPlugin", () => {
         let plugin: LanguageServerPlugin;
 
         beforeEach(() => {
-            plugin = new LanguageServerPlugin(
-                mockClient,
-                "file:///test.ts",
-                "typescript",
-                mockView,
+            plugin = new LanguageServerPlugin({
+                client: mockClient,
+                documentUri: "file:///test.ts",
+                languageId: "typescript",
+                view: mockView,
                 featureOptions,
-            );
+            });
 
             vi.clearAllMocks();
         });
@@ -369,13 +389,13 @@ describe("LanguageServerPlugin", () => {
         let plugin: LanguageServerPlugin;
 
         beforeEach(() => {
-            plugin = new LanguageServerPlugin(
-                mockClient,
-                "file:///test.ts",
-                "typescript",
-                mockView,
+                plugin = new LanguageServerPlugin({
+                client: mockClient,
+                documentUri: "file:///test.ts",
+                languageId: "typescript",
+                view: mockView,
                 featureOptions,
-            );
+            });
 
             vi.clearAllMocks();
         });
@@ -423,20 +443,19 @@ describe("LanguageServerPlugin", () => {
 
             expect(result).toBeNull();
         });
-
     });
 
     describe("requestCompletion", () => {
         let plugin: LanguageServerPlugin;
 
         beforeEach(() => {
-            plugin = new LanguageServerPlugin(
-                mockClient,
-                "file:///test.ts",
-                "typescript",
-                mockView,
+            plugin = new LanguageServerPlugin({
+                client: mockClient,
+                documentUri: "file:///test.ts",
+                languageId: "typescript",
+                view: mockView,
                 featureOptions,
-            );
+            });
 
             vi.clearAllMocks();
         });
@@ -500,20 +519,19 @@ describe("LanguageServerPlugin", () => {
 
             expect(result).toBeNull();
         });
-
     });
 
     describe("requestDefinition", () => {
         let plugin: LanguageServerPlugin;
 
-        beforeEach(() => {
-            plugin = new LanguageServerPlugin(
-                mockClient,
-                "file:///test.ts",
-                "typescript",
-                mockView,
+            beforeEach(() => {
+                plugin = new LanguageServerPlugin({
+                client: mockClient,
+                documentUri: "file:///test.ts",
+                languageId: "typescript",
+                view: mockView,
                 featureOptions,
-            );
+            });
 
             vi.clearAllMocks();
         });
@@ -561,20 +579,19 @@ describe("LanguageServerPlugin", () => {
 
             expect(result).toBeUndefined();
         });
-
     });
 
     describe("processNotification", () => {
         let plugin: LanguageServerPlugin;
 
         beforeEach(() => {
-            plugin = new LanguageServerPlugin(
-                mockClient,
-                "file:///test.ts",
-                "typescript",
-                mockView,
+            plugin = new LanguageServerPlugin({
+                client: mockClient,
+                documentUri: "file:///test.ts",
+                languageId: "typescript",
+                view: mockView,
                 featureOptions,
-            );
+            });
 
             vi.clearAllMocks();
         });

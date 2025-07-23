@@ -17,6 +17,7 @@ const CompletionItemKindMap = Object.fromEntries(
 
 interface ConvertCompletionOptions {
     allowHTMLContent: boolean;
+    useSnippetOnCompletion: boolean;
     hasResolveProvider: boolean;
     resolveItem: (item: LSP.CompletionItem) => Promise<LSP.CompletionItem>;
 }
@@ -81,7 +82,8 @@ export function convertCompletionItem(
             } else {
                 if (
                     insertText &&
-                    insertTextFormat === InsertTextFormat.Snippet
+                    insertTextFormat === InsertTextFormat.Snippet &&
+                    options.useSnippetOnCompletion
                 ) {
                     const applySnippet = snippet(convertSnippet(insertText));
                     applySnippet(view, null, from, to);
