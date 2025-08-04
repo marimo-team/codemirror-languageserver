@@ -108,7 +108,7 @@ export class LanguageServerPlugin implements PluginValue {
         this.featureOptions = featureOptions;
         this.onGoToDefinition = onGoToDefinition;
         this.markdownRenderer = markdownRenderer;
-        this.disposeListener = client.onNotification(this.processNotification);
+        this.disposeListener = client.onNotification(this.processNotification.bind(this));
 
         this.initialize({
             documentText: this.view.state.doc.toString(),
@@ -268,7 +268,7 @@ export class LanguageServerPlugin implements PluginValue {
         const token = match
             ? context.matchBefore(match)
             : // Fallback to matching any character
-              context.matchBefore(/[a-zA-Z0-9]+/);
+            context.matchBefore(/[a-zA-Z0-9]+/);
         let { pos } = context;
 
         const sortedItems = sortCompletionItems(
@@ -400,12 +400,12 @@ export class LanguageServerPlugin implements PluginValue {
         }
 
         const severityMap: Record<DiagnosticSeverity, Diagnostic["severity"]> =
-            {
-                [DiagnosticSeverity.Error]: "error",
-                [DiagnosticSeverity.Warning]: "warning",
-                [DiagnosticSeverity.Information]: "info",
-                [DiagnosticSeverity.Hint]: "info",
-            };
+        {
+            [DiagnosticSeverity.Error]: "error",
+            [DiagnosticSeverity.Warning]: "warning",
+            [DiagnosticSeverity.Information]: "info",
+            [DiagnosticSeverity.Hint]: "info",
+        };
 
         const diagnostics = params.diagnostics.map(
             async ({ range, message, severity, code, source }) => {
@@ -417,7 +417,7 @@ export class LanguageServerPlugin implements PluginValue {
                     (action): Action => ({
                         name:
                             "command" in action &&
-                            typeof action.command === "object"
+                                typeof action.command === "object"
                                 ? action.command?.title || action.title
                                 : action.title,
                         apply: async () => {
