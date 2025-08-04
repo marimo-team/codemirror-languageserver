@@ -261,10 +261,20 @@ export function eventsFromChangeSet(
 
     // Sort in reverse order to prevent index shift
     events.sort((a, b) => {
-        if (a.range?.start.line !== b.range?.start.line) {
-            return b.range?.start.line - a.range?.start.line;
+        if (!a.range) return 1;  // Sort `a` after `b`.
+        if (!b.range) return -1; // Sort `b` after `a`.
+
+        const aLine = a.range.start.line ?? -1;
+        const bLine = b.range.start.line ?? -1;
+
+        if (aLine !== bLine) {
+            return bLine - aLine; // Sort by line in descending order.
         }
-        return b.range?.start.character - a.range?.start.character;
+
+        const aChar = a.range.start.character ?? -1;
+        const bChar = b.range.start.character ?? -1;
+
+        return bChar - aChar; // If lines are the same, sort by character in descending order.
     });
     return events;
 }
