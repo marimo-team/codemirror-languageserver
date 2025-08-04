@@ -261,10 +261,10 @@ export function eventsFromChangeSet(
 
     // Sort in reverse order to prevent index shift
     events.sort((a, b) => {
-        if (a.range!.start.line !== b.range!.start.line) {
-            return b.range!.start.line - a.range!.start.line;
+        if (a.range?.start.line !== b.range?.start.line) {
+            return b.range?.start.line - a.range?.start.line;
         }
-        return b.range!.start.character - a.range!.start.character;
+        return b.range?.start.character - a.range?.start.character;
     });
     return events;
 }

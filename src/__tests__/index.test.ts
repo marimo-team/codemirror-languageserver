@@ -9,11 +9,8 @@ import type {
     DidOpenTextDocumentParams,
     Hover,
 } from "vscode-languageserver-protocol";
-import {
-    LanguageServerClient,
-    languageServer,
-    languageServerWithClient,
-} from "../plugin";
+import { LanguageServerClient } from "../lsp";
+import { languageServer, languageServerWithClient } from "../plugin";
 import { offsetToPos, posToOffset } from "../utils";
 
 // Mock WebSocket transport
@@ -38,8 +35,7 @@ const createMockClient = (
         initializePromise: Promise.resolve(),
         initialize: vi.fn().mockResolvedValue(undefined),
         close: vi.fn(),
-        attachPlugin: vi.fn(),
-        detachPlugin: vi.fn(),
+        onNotification: vi.fn(),
         textDocumentDidOpen: vi
             .fn()
             .mockResolvedValue({} as DidOpenTextDocumentParams),
@@ -245,13 +241,13 @@ describe("LanguageServer", () => {
                 (ext) => ext && typeof ext === "object" && "create" in ext,
             );
 
-            // Manually create the plugin to trigger attachPlugin
+            // Manually create the plugin to trigger onNotification
             if (viewPluginExt && "create" in viewPluginExt) {
                 // @ts-ignore - We know this is a ViewPlugin
                 viewPluginExt.create(mockView);
 
-                // Now attachPlugin should have been called
-                expect(mockClient.attachPlugin).toHaveBeenCalled();
+                // Now onNotification should have been called
+                expect(mockClient.onNotification).toHaveBeenCalled();
 
                 // This is a simplified test that verifies the callback mechanism works
                 // In a real scenario, the plugin would call textDocumentDefinition and then the callback
@@ -321,13 +317,13 @@ describe("LanguageServer", () => {
                 (ext) => ext && typeof ext === "object" && "create" in ext,
             );
 
-            // Manually create the plugin to trigger attachPlugin
+            // Manually create the plugin to trigger onNotification
             if (viewPluginExt && "create" in viewPluginExt) {
                 // @ts-ignore - We know this is a ViewPlugin
                 viewPluginExt.create(mockView);
 
-                // Now attachPlugin should have been called
-                expect(mockClient.attachPlugin).toHaveBeenCalled();
+                // Now onNotification should have been called
+                expect(mockClient.onNotification).toHaveBeenCalled();
 
                 // This is a simplified test that verifies the callback mechanism works
                 // In a real scenario, the plugin would call textDocumentDefinition and then the callback

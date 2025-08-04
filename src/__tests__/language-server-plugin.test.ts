@@ -1,24 +1,24 @@
-import { describe, expect, it, vi, beforeEach, it } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
-import { LanguageServerClient, LanguageServerPlugin } from "../plugin.js";
-import type { FeatureOptions } from "../plugin.js";
-import type { Transport } from "@open-rpc/client-js/build/transports/Transport.js";
+import { Transport } from "@open-rpc/client-js/build/transports/Transport.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type * as LSP from "vscode-languageserver-protocol";
 import { CompletionTriggerKind } from "vscode-languageserver-protocol";
+import { type FeatureOptions, LanguageServerClient } from "../lsp.js";
+import { LanguageServerPlugin } from "../plugin.js";
 
 // Note: jsdom environment provides document
 
 // Mock utils functions
 vi.mock("../utils.js", () => ({
-    posToOffset: vi.fn().mockImplementation((doc, pos) => {
+    posToOffset: vi.fn().mockImplementation((_doc, pos) => {
         // Simple mock that returns character position for single line documents
         if (pos.line === 0) {
             return pos.character;
         }
         return null;
     }),
-    posToOffsetOrZero: vi.fn().mockImplementation((doc, pos) => {
+    posToOffsetOrZero: vi.fn().mockImplementation((_doc, pos) => {
         // Simple mock that returns character position for single line documents
         if (pos.line === 0) {
             return pos.character;
@@ -32,10 +32,10 @@ vi.mock("../utils.js", () => ({
             return contents.value;
         return String(contents);
     }),
-    isEmptyDocumentation: vi.fn().mockImplementation((contents) => {
+    isEmptyDocumentation: vi.fn().mockImplementation((_contents) => {
         return false;
     }),
-    offsetToPos: vi.fn().mockImplementation((doc, offset) => {
+    offsetToPos: vi.fn().mockImplementation((_doc, offset) => {
         return { line: 0, character: offset };
     }),
     eventsFromChangeSet: vi.fn().mockReturnValue([]),
@@ -58,7 +58,7 @@ vi.mock("@open-rpc/client-js", () => ({
 }));
 
 // Create a simple mock transport
-class MockTransport implements Transport {
+class MockTransport extends Transport {
     sendData = vi.fn().mockResolvedValue({});
     subscribe = vi.fn();
     unsubscribe = vi.fn();
@@ -114,8 +114,6 @@ describe("LanguageServerPlugin", () => {
             },
         };
 
-        mockClient.attachPlugin = vi.fn();
-        mockClient.detachPlugin = vi.fn();
         mockClient.initializePromise = Promise.resolve();
         mockClient.textDocumentDidOpen = vi.fn().mockResolvedValue(undefined);
         mockClient.textDocumentDidChange = vi.fn().mockResolvedValue(undefined);
@@ -123,6 +121,7 @@ describe("LanguageServerPlugin", () => {
         mockClient.textDocumentCompletion = vi.fn();
         mockClient.textDocumentDefinition = vi.fn();
         mockClient.completionItemResolve = vi.fn();
+        mockClient.onNotification = vi.fn().mockReturnValue(() => {});
 
         // Create a mock view
         mockView = new EditorView({
@@ -163,8 +162,7 @@ describe("LanguageServerPlugin", () => {
             expect(plugin.sendIncrementalChanges).toBe(true);
             expect(plugin.featureOptions).toBe(featureOptions);
             expect(plugin.onGoToDefinition).toBeUndefined();
-
-            expect(mockClient.attachPlugin).toHaveBeenCalledWith(plugin);
+            expect(mockClient.onNotification).toHaveBeenCalled();
 
             // Wait for async initialization
             await plugin.initialize({
@@ -280,22 +278,6 @@ describe("LanguageServerPlugin", () => {
         });
     });
 
-    describe("destroy", () => {
-        it("should detach plugin from client", () => {
-            const plugin = new LanguageServerPlugin({
-                client: mockClient,
-                documentUri: "file:///test.ts",
-                languageId: "typescript",
-                view: mockView,
-                featureOptions,
-            });
-
-            plugin.destroy();
-
-            expect(mockClient.detachPlugin).toHaveBeenCalledWith(plugin);
-        });
-    });
-
     describe("sendChanges", () => {
         let plugin: LanguageServerPlugin;
 
@@ -389,7 +371,7 @@ describe("LanguageServerPlugin", () => {
         let plugin: LanguageServerPlugin;
 
         beforeEach(() => {
-                plugin = new LanguageServerPlugin({
+            plugin = new LanguageServerPlugin({
                 client: mockClient,
                 documentUri: "file:///test.ts",
                 languageId: "typescript",
@@ -524,8 +506,8 @@ describe("LanguageServerPlugin", () => {
     describe("requestDefinition", () => {
         let plugin: LanguageServerPlugin;
 
-            beforeEach(() => {
-                plugin = new LanguageServerPlugin({
+        beforeEach(() => {
+            plugin = new LanguageServerPlugin({
                 client: mockClient,
                 documentUri: "file:///test.ts",
                 languageId: "typescript",
@@ -627,6 +609,7 @@ describe("LanguageServerPlugin", () => {
 
             // Should not throw
             expect(() =>
+                // @ts-expect-error
                 plugin.processNotification(notification),
             ).not.toThrow();
         });
@@ -652,6 +635,35 @@ describe("LanguageServerPlugin", () => {
             expect(() =>
                 plugin.processNotification(notification),
             ).not.toThrow();
+        });
+    });
+
+    describe("markdownRenderer", () => {
+        it("should render markdown using custom renderer", () => {
+            const plugin = new LanguageServerPlugin({
+                client: mockClient,
+                documentUri: "file:///test.ts",
+                languageId: "typescript",
+                view: mockView,
+                featureOptions,
+                markdownRenderer: (markdown) => `<div>${markdown}</div>`,
+            });
+            const markdown = "This is **bold** text";
+            const rendered = plugin.markdownRenderer(markdown);
+            expect(rendered).toBe("<div>This is **bold** text</div>");
+        });
+
+        it("should use default renderer if none provided", () => {
+            const defaultPlugin = new LanguageServerPlugin({
+                client: mockClient,
+                documentUri: "file:///test.ts",
+                languageId: "typescript",
+                view: mockView,
+                featureOptions,
+            });
+            const markdown = "This is **bold** text";
+            const rendered = defaultPlugin.markdownRenderer(markdown);
+            expect(rendered).toBe("");
         });
     });
 });
