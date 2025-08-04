@@ -63,6 +63,7 @@ export function formatContents(
         | LSP.MarkedString
         | LSP.MarkedString[]
         | undefined,
+    markdownRenderer = renderMarkdown,
 ): string {
     if (!contents) {
         return "";
@@ -70,13 +71,13 @@ export function formatContents(
     if (isLSPMarkupContent(contents)) {
         let value = contents.value;
         if (contents.kind === "markdown") {
-            value = renderMarkdown(value.trim());
+            value = markdownRenderer(value.trim());
         }
         return value;
     }
     if (Array.isArray(contents)) {
         return contents
-            .map((c) => formatContents(c))
+            .map((c) => formatContents(c, markdownRenderer))
             .filter(Boolean)
             .join("\n\n");
     }

@@ -95,7 +95,6 @@ export class LanguageServerPlugin implements PluginValue {
             onGoToDefinition,
             markdownRenderer = renderMarkdown,
         } = opts;
-
         this.documentVersion = 0;
         this.pluginId = uniqueId();
         this.client = client;
@@ -213,9 +212,9 @@ export class LanguageServerPlugin implements PluginValue {
         const dom = document.createElement("div");
         dom.classList.add("documentation", "cm-lsp-hover-tooltip");
         if (this.allowHTMLContent) {
-            dom.innerHTML = formatContents(contents);
+            dom.innerHTML = formatContents(contents, this.markdownRenderer);
         } else {
-            dom.textContent = formatContents(contents);
+            dom.textContent = formatContents(contents, this.markdownRenderer);
         }
         return {
             pos,
@@ -952,7 +951,7 @@ export class LanguageServerPlugin implements PluginValue {
         docsElement.classList.add("cm-signature-docs");
         docsElement.style.cssText = "margin-top: 4px; color: #666;";
 
-        const formattedContent = formatContents(documentation);
+        const formattedContent = formatContents(documentation, this.markdownRenderer);
 
         if (this.allowHTMLContent) {
             docsElement.innerHTML = formattedContent;
@@ -974,7 +973,7 @@ export class LanguageServerPlugin implements PluginValue {
         paramDocsElement.style.cssText =
             "margin-top: 4px; font-style: italic; border-top: 1px solid #eee; padding-top: 4px;";
 
-        const formattedContent = formatContents(documentation);
+        const formattedContent = formatContents(documentation, this.markdownRenderer);
 
         if (this.allowHTMLContent) {
             paramDocsElement.innerHTML = formattedContent;

@@ -20,6 +20,7 @@ interface ConvertCompletionOptions {
     useSnippetOnCompletion: boolean;
     hasResolveProvider: boolean;
     resolveItem: (item: LSP.CompletionItem) => Promise<LSP.CompletionItem>;
+    markdownRenderer?: (markdown: string) => string;
 }
 
 namespace InsertTextFormat {
@@ -147,9 +148,9 @@ export function convertCompletionItem(
                     return null;
                 }
                 if (options.allowHTMLContent) {
-                    dom.innerHTML = formatContents(content);
+                    dom.innerHTML = formatContents(content, options.markdownRenderer);
                 } else {
-                    dom.textContent = formatContents(content);
+                    dom.textContent = formatContents(content, options.markdownRenderer);
                 }
                 return dom;
             } catch (e) {
@@ -162,9 +163,9 @@ export function convertCompletionItem(
                     const dom = document.createElement("div");
                     dom.classList.add("documentation");
                     if (options.allowHTMLContent) {
-                        dom.innerHTML = formatContents(documentation);
+                        dom.innerHTML = formatContents(documentation, options.markdownRenderer);
                     } else {
-                        dom.textContent = formatContents(documentation);
+                        dom.textContent = formatContents(documentation, options.markdownRenderer);
                     }
                     return dom;
                 }
@@ -177,9 +178,9 @@ export function convertCompletionItem(
             const dom = document.createElement("div");
             dom.classList.add("documentation");
             if (options.allowHTMLContent) {
-                dom.innerHTML = formatContents(documentation);
+                dom.innerHTML = formatContents(documentation, options.markdownRenderer);
             } else {
-                dom.textContent = formatContents(documentation);
+                dom.textContent = formatContents(documentation, options.markdownRenderer);
             }
             return dom;
         };

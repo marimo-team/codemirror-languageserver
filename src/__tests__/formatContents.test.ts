@@ -134,4 +134,13 @@ describe("formatContents", () => {
         };
         expect(formatContents(content)).toMatchInlineSnapshot(`""`);
     });
+
+    it("allows specifying a custom markdown renderer", () => {
+        const customRenderer = (markdown: string) => `<p>${markdown}</p>`;
+        const content: LSP.MarkupContent = {
+            kind: "markdown",
+            value: "Custom renderer test",
+        };
+        expect(formatContents(content, customRenderer)).toBe("<p>Custom renderer test</p>");
+    });
 });

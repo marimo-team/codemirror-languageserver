@@ -121,7 +121,7 @@ describe("LanguageServerPlugin", () => {
         mockClient.textDocumentCompletion = vi.fn();
         mockClient.textDocumentDefinition = vi.fn();
         mockClient.completionItemResolve = vi.fn();
-        mockClient.onNotification = vi.fn().mockReturnValue(() => {});
+        mockClient.onNotification = vi.fn().mockReturnValue(() => { });
 
         // Create a mock view
         mockView = new EditorView({
@@ -328,7 +328,7 @@ describe("LanguageServerPlugin", () => {
 
             const consoleSpy = vi
                 .spyOn(console, "error")
-                .mockImplementation(() => {});
+                .mockImplementation(() => { });
 
             const changes: LSP.TextDocumentContentChangeEvent[] = [
                 { text: "new content" },
@@ -635,35 +635,6 @@ describe("LanguageServerPlugin", () => {
             expect(() =>
                 plugin.processNotification(notification),
             ).not.toThrow();
-        });
-    });
-
-    describe("markdownRenderer", () => {
-        it("should render markdown using custom renderer", () => {
-            const plugin = new LanguageServerPlugin({
-                client: mockClient,
-                documentUri: "file:///test.ts",
-                languageId: "typescript",
-                view: mockView,
-                featureOptions,
-                markdownRenderer: (markdown) => `<div>${markdown}</div>`,
-            });
-            const markdown = "This is **bold** text";
-            const rendered = plugin.markdownRenderer(markdown);
-            expect(rendered).toBe("<div>This is **bold** text</div>");
-        });
-
-        it("should use default renderer if none provided", () => {
-            const defaultPlugin = new LanguageServerPlugin({
-                client: mockClient,
-                documentUri: "file:///test.ts",
-                languageId: "typescript",
-                view: mockView,
-                featureOptions,
-            });
-            const markdown = "This is **bold** text";
-            const rendered = defaultPlugin.markdownRenderer(markdown);
-            expect(rendered).toBe("");
         });
     });
 });
