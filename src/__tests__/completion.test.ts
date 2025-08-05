@@ -121,6 +121,7 @@ describe("convertCompletionItem", () => {
 
         expect(completion.info).toBeDefined();
         if (completion.info) {
+            // @ts-expect-error
             await completion.info();
             expect(mockResolve).toHaveBeenCalledWith(lspItem);
         }

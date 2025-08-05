@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { LanguageServerPlugin } from "../plugin.js";
+
+import type Client from "@open-rpc/client-js";
+import { Transport } from "@open-rpc/client-js/build/transports/Transport.js";
+import type * as LSP from "vscode-languageserver-protocol";
 import {
     LanguageServerClient,
     type LanguageServerClientOptions,
-    type LanguageServerPlugin,
-} from "../plugin.js";
-import { Transport } from "@open-rpc/client-js/build/transports/Transport.js";
-import type * as LSP from "vscode-languageserver-protocol";
-import type Client from "@open-rpc/client-js";
+} from "../lsp.js";
 
 // Create a simple mock transport
 class MockTransport extends Transport {
@@ -218,7 +219,7 @@ describe("LanguageServerClient", () => {
     });
 
     describe("plugin management", () => {
-        it("should attach and detach plugins", () => {
+        it("should process notifications to all listeners", () => {
             const options = {
                 rootUri: "file:///test",
                 workspaceFolders: null,
@@ -226,60 +227,12 @@ describe("LanguageServerClient", () => {
             };
 
             const client = new LanguageServerClient(options);
-            const mockPlugin = {
-                processNotification: vi.fn(),
-            } as unknown as LanguageServerPlugin;
 
-            // Attach plugin
-            client.attachPlugin(mockPlugin);
+            const test = vi.fn();
+            const test2 = vi.fn();
 
-            // Verify plugin was added by checking internal plugins array
-            // @ts-expect-error: Accessing private method for test purposes
-            expect(client.plugins).toContain(mockPlugin);
-
-            // Detach plugin
-            client.detachPlugin(mockPlugin);
-
-            // Verify plugin was removed
-            // @ts-expect-error: Accessing private method for test purposes
-            expect(client.plugins).not.toContain(mockPlugin);
-        });
-
-        it("should handle detaching non-existent plugin", () => {
-            const options = {
-                rootUri: "file:///test",
-                workspaceFolders: null,
-                transport: mockTransport,
-            };
-
-            const client = new LanguageServerClient(options);
-            const nonExistentPlugin = {
-                processNotification: vi.fn(),
-            } as unknown as LanguageServerPlugin;
-
-            // Should not throw
-            expect(() => client.detachPlugin(nonExistentPlugin)).not.toThrow();
-        });
-
-        it("should process notifications to all attached plugins", () => {
-            const options = {
-                rootUri: "file:///test",
-                workspaceFolders: null,
-                transport: mockTransport,
-            };
-
-            const client = new LanguageServerClient(options);
-            const mockPlugin1 = {
-                notify: vi.fn(),
-                processNotification: vi.fn(),
-            } as unknown as LanguageServerPlugin;
-            const mockPlugin2 = {
-                notify: vi.fn(),
-                processNotification: vi.fn(),
-            } as unknown as LanguageServerPlugin;
-
-            client.attachPlugin(mockPlugin1);
-            client.attachPlugin(mockPlugin2);
+            const dispose = client.onNotification(test);
+            const dispose2 = client.onNotification(test2);
 
             const notification = {
                 jsonrpc: "2.0" as const,
@@ -294,12 +247,20 @@ describe("LanguageServerClient", () => {
             // @ts-expect-error: Accessing private method for test purposes
             client.processNotification(notification);
 
-            expect(mockPlugin1.processNotification).toHaveBeenCalledWith(
-                notification,
-            );
-            expect(mockPlugin2.processNotification).toHaveBeenCalledWith(
-                notification,
-            );
+            expect(test).toHaveBeenCalledWith(notification);
+            expect(test2).toHaveBeenCalledWith(notification);
+            expect(test).toHaveBeenCalledTimes(1);
+            expect(test2).toHaveBeenCalledTimes(1);
+
+            // Clean up
+            dispose();
+            dispose2();
+
+            // @ts-expect-error: Accessing private method for test purposes
+            client.processNotification(notification);
+            // Disposed listeners should not have been called again
+            expect(test).toHaveBeenCalledTimes(1);
+            expect(test2).toHaveBeenCalledTimes(1);
         });
     });
 
@@ -324,35 +285,6 @@ describe("LanguageServerClient", () => {
             client.close();
 
             expect(mockInternalClient.close).toHaveBeenCalled();
-        });
-
-        it("should auto-close when detaching plugin if autoClose is true", () => {
-            const options = {
-                rootUri: "file:///test",
-                workspaceFolders: null,
-                transport: mockTransport,
-                autoClose: true,
-            };
-
-            const client = new LanguageServerClient(options);
-
-            // Mock the internal client
-            const mockInternalRPCClient = {
-                close: vi.fn(),
-                notify: vi.fn(),
-            } as unknown as Client;
-            // @ts-expect-error: Accessing private method for test purposes
-            client.client = mockInternalRPCClient;
-
-            const mockPlugin = {
-                notify: vi.fn(),
-                processNotification: vi.fn(),
-            } as unknown as LanguageServerPlugin;
-
-            client.attachPlugin(mockPlugin);
-            client.detachPlugin(mockPlugin);
-
-            expect(mockInternalRPCClient.close).toHaveBeenCalled();
         });
     });
 

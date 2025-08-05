@@ -6,9 +6,8 @@ import type {
     ClientCapabilities,
     WorkspaceEdit,
 } from "vscode-languageserver-protocol";
-import { LanguageServerClient } from "../plugin";
+import { type FeatureOptions, LanguageServerClient } from "../lsp";
 import { LanguageServerPlugin } from "../plugin";
-import type { FeatureOptions } from "../plugin";
 
 class MockTransport extends Transport {
     sendData = vi.fn().mockResolvedValue({});
