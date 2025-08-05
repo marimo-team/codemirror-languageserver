@@ -76,10 +76,10 @@ export interface LanguageServerClientOptions {
      * Can be an object or a function that modifies the default capabilities.
      */
     capabilities?:
-        | LSP.InitializeParams["capabilities"]
-        | ((
-              defaultCapabilities: LSP.InitializeParams["capabilities"],
-          ) => LSP.InitializeParams["capabilities"]);
+    | LSP.InitializeParams["capabilities"]
+    | ((
+        defaultCapabilities: LSP.InitializeParams["capabilities"],
+    ) => LSP.InitializeParams["capabilities"]);
     /** Additional initialization options to send to the language server */
     initializationOptions?: LSP.InitializeParams["initializationOptions"];
     getWorkspaceConfiguration?: (
@@ -185,7 +185,7 @@ export interface LanguageServerOptions extends FeatureOptions {
  */
 export interface LanguageServerWebsocketOptions
     extends Omit<LanguageServerOptions, "client">,
-        Omit<LanguageServerClientOptions, "transport"> {
+    Omit<LanguageServerClientOptions, "transport"> {
     /** WebSocket URI for connecting to the language server */
     serverUri: `ws://${string}` | `wss://${string}`;
 }
@@ -205,7 +205,7 @@ export class LanguageServerClient {
     private initializationOptions: LanguageServerClientOptions["initializationOptions"];
     public clientCapabilities: LanguageServerClientOptions["capabilities"];
 
-    private notificationListeners: ((n: Notification) => void)[] = [];
+    private notificationListeners: Set<(n: Notification) => void> = new Set();
 
     constructor({
         rootUri,
@@ -437,14 +437,9 @@ export class LanguageServerClient {
     }
 
     public onNotification(listener: (n: Notification) => void) {
-        this.notificationListeners.push(listener);
+        this.notificationListeners.add(listener);
 
-        return () => {
-            const index = this.notificationListeners.indexOf(listener);
-            if (index !== -1) {
-                this.notificationListeners.splice(index, 1);
-            }
-        };
+        return () => this.notificationListeners.delete(listener);
     }
 
     protected request<K extends keyof LSPRequestMap>(
