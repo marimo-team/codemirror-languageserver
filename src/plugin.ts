@@ -2,7 +2,6 @@ import { autocompletion } from "@codemirror/autocomplete";
 import {
     type Action,
     type Diagnostic,
-    forEachDiagnostic,
     setDiagnostics,
 } from "@codemirror/lint";
 import {
