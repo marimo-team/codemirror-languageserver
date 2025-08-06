@@ -488,34 +488,8 @@ export class LanguageServerPlugin implements PluginValue {
             return;
         }
 
-        const state = this.view.state;
-
-        // Get current diagnostics from the state
-        const currentDiagnostics: Diagnostic[] = [];
-        forEachDiagnostic(state, (diagnostic) => {
-            currentDiagnostics.push(diagnostic);
-            return true;
-        });
-
-        // Sources
-        const uniqueSources = new Set(
-            newDiagnostics
-                .map((diagnostic) => diagnostic.source)
-                .filter(Boolean),
-        );
-
-        // Filter out diagnostics from the same source
-        const diagnosticsFromOtherSources = newDiagnostics.filter(
-            (diagnostic) => {
-                return !uniqueSources.has(diagnostic.source);
-            },
-        );
-
         this.view.dispatch(
-            setDiagnostics(state, [
-                ...diagnosticsFromOtherSources,
-                ...newDiagnostics,
-            ]),
+            setDiagnostics(this.view.state, newDiagnostics),
         );
     }
 
