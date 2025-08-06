@@ -56,6 +56,13 @@ function uniqueId() {
     return String(Date.now() + Math.random());
 }
 
+namespace Diagnostic {
+    export function key(a: Diagnostic) {
+        // we assume actions are not relevant for equality
+        return a.from + ':' + a.to + ':' + a.severity + ':' + a.message + ':' + a.source + ':' + a.markClass;
+    }
+}
+
 export class LanguageServerPlugin implements PluginValue {
     private documentVersion: number;
     private pluginId: string;
@@ -388,6 +395,9 @@ export class LanguageServerPlugin implements PluginValue {
         ) {
             this.lastSeenDiagnosticsVersion = params.version;
             this.clearDiagnostics();
+            // If the version is older or the same, ignore it
+        } else if (params.version != null && params.version <= this.lastSeenDiagnosticsVersion) {
+            return;
         }
 
         // Check if diagnostics are enabled
@@ -477,19 +487,8 @@ export class LanguageServerPlugin implements PluginValue {
         );
 
         const resolvedDiagnostics = await Promise.all(diagnostics);
-        this.addDiagnostics(resolvedDiagnostics);
-    }
-
-    /**
-     * Adds diagnostics to the current state
-     */
-    private addDiagnostics(newDiagnostics: Diagnostic[]) {
-        if (newDiagnostics.length === 0) {
-            return;
-        }
-
         this.view.dispatch(
-            setDiagnostics(this.view.state, newDiagnostics),
+            setDiagnostics(this.view.state, resolvedDiagnostics)
         );
     }
 
