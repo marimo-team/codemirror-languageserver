@@ -56,13 +56,6 @@ function uniqueId() {
     return String(Date.now() + Math.random());
 }
 
-namespace Diagnostic {
-    export function key(a: Diagnostic) {
-        // we assume actions are not relevant for equality
-        return a.from + ':' + a.to + ':' + a.severity + ':' + a.message + ':' + a.source + ':' + a.markClass;
-    }
-}
-
 export class LanguageServerPlugin implements PluginValue {
     private documentVersion: number;
     private pluginId: string;
