@@ -64,7 +64,9 @@ jobs:
           echo "✅ Build artifacts validation passed"
 
       - name: 📦 Publish to NPM
-        run: pnpm publish --no-git-checks
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: "" # Clear placeholder set by setup-node to enable OIDC
 
       - name: 📝 Update Changelog
         run: npx changelogithub
