@@ -1270,30 +1270,28 @@ export function languageServerWithClient(options: LanguageServerOptions) {
 
                 const triggerChars = plugin.client.capabilities
                     .signatureHelpProvider.triggerCharacters || ["(", ","];
-                let triggerCharacter: string | undefined;
 
                 // Check if changes include trigger characters
                 const changes = update.changes;
-                let shouldTrigger = false;
                 let triggerPos = -1;
+                let triggerCharacter: string | undefined;
 
-                changes.iterChanges((_fromA, _toA, _fromB, toB, inserted) => {
-                    if (shouldTrigger) return; // Skip if already found a trigger
+                changes.iterChanges((_fromA, _toA, fromB, _toB, inserted) => {
+                    if (triggerPos >= 0) return; // Skip if already found a trigger
 
-                    const text = inserted.toString();
-                    if (!text) return;
+                    const result = getSignatureHelpTriggerPosition(
+                        inserted.toString(),
+                        fromB,
+                        triggerChars,
+                    );
 
-                    for (const char of triggerChars) {
-                        if (text.includes(char)) {
-                            shouldTrigger = true;
-                            triggerPos = toB;
-                            triggerCharacter = char;
-                            break;
-                        }
+                    if (result) {
+                        triggerPos = result.triggerPos;
+                        triggerCharacter = result.triggerCharacter;
                     }
                 });
 
-                if (shouldTrigger && triggerPos >= 0) {
+                if (triggerPos >= 0) {
                     plugin.showSignatureHelpTooltip(
                         update.view,
                         triggerPos,
@@ -1419,4 +1417,37 @@ export function getCompletionTriggerKind(
     }
 
     return { triggerKind, triggerCharacter };
+}
+
+/**
+ * Calculates the trigger position for signature help based on inserted text.
+ *
+ * This function finds the first trigger character in the inserted text and returns
+ * the position right after it. This is important for handling auto-bracket completion
+ * where "()" is inserted at once - we want the position after "(", not after ")".
+ *
+ * @param insertedText The text that was inserted
+ * @param fromB The start position of the insertion in the document
+ * @param triggerChars Array of characters that trigger signature help (e.g., ["(", ","])
+ * @returns Object with triggerPos and triggerCharacter, or null if no trigger found
+ */
+export function getSignatureHelpTriggerPosition(
+    insertedText: string,
+    fromB: number,
+    triggerChars: string[],
+): { triggerPos: number; triggerCharacter: string } | null {
+    if (!insertedText) return null;
+
+    for (const char of triggerChars) {
+        const charIndex = insertedText.indexOf(char);
+        if (charIndex !== -1) {
+            return {
+                // Position right after the trigger character
+                triggerPos: fromB + charIndex + 1,
+                triggerCharacter: char,
+            };
+        }
+    }
+
+    return null;
 }
