@@ -248,7 +248,7 @@ describe("Signature Help Tooltip Dismissal", () => {
             expect(tooltip).toMatchObject({
                 pos: expect.any(Number),
                 end: expect.any(Number),
-                above: true,
+                above: false,
             });
             expect(typeof tooltip?.create).toBe("function");
         });

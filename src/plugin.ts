@@ -807,7 +807,7 @@ export class LanguageServerPlugin implements PluginValue {
                 pos,
                 end: pos,
                 create: (_view) => ({ dom }),
-                above: true,
+                above: this.featureOptions.signatureHelpOptions?.position === "above",
             };
         } catch (error) {
             console.error("Signature help error:", error);
