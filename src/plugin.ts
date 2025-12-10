@@ -23,7 +23,7 @@ import type {
     CompletionContext,
     CompletionResult,
 } from "@codemirror/autocomplete";
-import { type Extension, StateEffect, StateField, type EditorState } from "@codemirror/state";
+import { type Extension, StateEffect, StateField } from "@codemirror/state";
 import type { PluginValue, ViewUpdate } from "@codemirror/view";
 import type * as LSP from "vscode-languageserver-protocol";
 import type { PublishDiagnosticsParams } from "vscode-languageserver-protocol";
