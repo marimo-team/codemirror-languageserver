@@ -11,6 +11,7 @@ import {
     ViewPlugin,
     hoverTooltip,
     keymap,
+    showTooltip,
 } from "@codemirror/view";
 import { WebSocketTransport } from "@open-rpc/client-js";
 import {
@@ -22,7 +23,7 @@ import type {
     CompletionContext,
     CompletionResult,
 } from "@codemirror/autocomplete";
-import type { Extension } from "@codemirror/state";
+import { type Extension, StateEffect, StateField, type EditorState } from "@codemirror/state";
 import type { PluginValue, ViewUpdate } from "@codemirror/view";
 import type * as LSP from "vscode-languageserver-protocol";
 import type { PublishDiagnosticsParams } from "vscode-languageserver-protocol";
@@ -55,6 +56,28 @@ const logger = console.log;
 function uniqueId() {
     return String(Date.now() + Math.random());
 }
+
+/**
+ * StateEffect for setting or clearing the signature help tooltip
+ */
+export const setSignatureHelpTooltip = StateEffect.define<Tooltip | null>();
+
+/**
+ * StateField that manages the signature help tooltip state
+ * Uses CodeMirror's showTooltip for proper lifecycle management
+ */
+export const signatureHelpTooltipField = StateField.define<Tooltip | null>({
+    create: () => null,
+    update(tooltip, tr) {
+        for (const effect of tr.effects) {
+            if (effect.is(setSignatureHelpTooltip)) {
+                return effect.value;
+            }
+        }
+        return tooltip;
+    },
+    provide: (field) => showTooltip.from(field),
+});
 
 export class LanguageServerPlugin implements PluginValue {
     private documentVersion: number;
@@ -784,7 +807,7 @@ export class LanguageServerPlugin implements PluginValue {
                 pos,
                 end: pos,
                 create: (_view) => ({ dom }),
-                above: false,
+                above: true,
             };
         } catch (error) {
             console.error("Signature help error:", error);
@@ -806,41 +829,21 @@ export class LanguageServerPlugin implements PluginValue {
             triggerCharacter,
         );
 
+        // Dispatch the tooltip (or null to clear) via StateEffect
+        view.dispatch({
+            effects: setSignatureHelpTooltip.of(tooltip),
+        });
+    }
+
+    /**
+     * Hides the signature help tooltip if one is currently shown
+     */
+    public hideSignatureHelpTooltip(view: EditorView) {
+        const tooltip = view.state.field(signatureHelpTooltipField);
         if (tooltip) {
-            // Create and show the tooltip manually
-            const { pos: tooltipPos, create } = tooltip;
-            const tooltipView = create(view);
-
-            const tooltipElement = document.createElement("div");
-            tooltipElement.className = "cm-tooltip cm-signature-tooltip";
-            tooltipElement.style.position = "absolute";
-
-            tooltipElement.appendChild(tooltipView.dom);
-
-            // Position the tooltip
-            const coords = view.coordsAtPos(tooltipPos);
-            if (coords) {
-                tooltipElement.style.left = `${coords.left}px`;
-                tooltipElement.style.top = `${coords.bottom + 5}px`;
-
-                // Add to DOM
-                document.body.appendChild(tooltipElement);
-
-                // Remove after a delay or on editor changes
-                setTimeout(() => {
-                    tooltipElement.remove();
-                }, 10000); // Show for 10 seconds
-
-                // Also remove on any user input
-                const removeTooltip = () => {
-                    tooltipElement.remove();
-                    view.dom.removeEventListener("keydown", removeTooltip);
-                    view.dom.removeEventListener("mousedown", removeTooltip);
-                };
-
-                view.dom.addEventListener("keydown", removeTooltip);
-                view.dom.addEventListener("mousedown", removeTooltip);
-            }
+            view.dispatch({
+                effects: setSignatureHelpTooltip.of(null),
+            });
         }
     }
 
@@ -1256,8 +1259,52 @@ export function languageServerWithClient(options: LanguageServerOptions) {
         );
     }
 
+    const hideSignatureHelpTooltip = (view: EditorView) => {
+        const tooltip = view.state.field(signatureHelpTooltipField);
+        if (tooltip) {
+            view.dispatch({
+                effects: setSignatureHelpTooltip.of(null),
+            });
+        }
+    }
+
     // Add signature help support if enabled
     if (featuresOptions.signatureHelpEnabled) {
+        extensions.push(signatureHelpTooltipField);
+
+        // Dismiss signature help on mousedown
+        extensions.push(
+            EditorView.domEventHandlers({
+                mousedown: (_, view) => {
+                    hideSignatureHelpTooltip(view);
+                    // Return false to let the click proceed normally
+                    return false;
+                },
+            }),
+        );
+
+        extensions.push(
+            keymap.of([
+                {
+                    // Dismiss tooltip when closing paren is typed
+                    key: ")",
+                    run: (view) => {
+                        hideSignatureHelpTooltip(view);
+                        // Return false to let the character be inserted
+                        return false;
+                    },
+                },
+                {
+                    // Or when Escape key is pressed
+                    key: "Escape",
+                    run: (view) => {
+                        hideSignatureHelpTooltip(view);
+                        return true;
+                    },
+                },
+            ]),
+        );
+
         extensions.push(
             EditorView.updateListener.of(async (update) => {
                 if (!(plugin && update.docChanged)) return;
