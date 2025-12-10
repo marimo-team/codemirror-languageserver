@@ -64,8 +64,6 @@ jobs:
 
       - name: 📦 Publish to NPM
         run: pnpm publish --no-git-checks
-        env:
-          NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
 
       - name: 📝 Update Changelog
         run: npx changelogithub
