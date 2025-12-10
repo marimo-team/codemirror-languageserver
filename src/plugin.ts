@@ -130,7 +130,9 @@ export class LanguageServerPlugin implements PluginValue {
         this.featureOptions = featureOptions;
         this.onGoToDefinition = onGoToDefinition;
         this.markdownRenderer = markdownRenderer;
-        this.disposeListener = client.onNotification(this.processNotification.bind(this));
+        this.disposeListener = client.onNotification(
+            this.processNotification.bind(this),
+        );
 
         this.initialize({
             documentText: this.view.state.doc.toString(),
@@ -290,7 +292,7 @@ export class LanguageServerPlugin implements PluginValue {
         const token = match
             ? context.matchBefore(match)
             : // Fallback to matching any character
-            context.matchBefore(/[a-zA-Z0-9]+/);
+              context.matchBefore(/[a-zA-Z0-9]+/);
         let { pos } = context;
 
         const sortedItems = sortCompletionItems(
@@ -422,12 +424,12 @@ export class LanguageServerPlugin implements PluginValue {
         }
 
         const severityMap: Record<DiagnosticSeverity, Diagnostic["severity"]> =
-        {
-            [DiagnosticSeverity.Error]: "error",
-            [DiagnosticSeverity.Warning]: "warning",
-            [DiagnosticSeverity.Information]: "info",
-            [DiagnosticSeverity.Hint]: "info",
-        };
+            {
+                [DiagnosticSeverity.Error]: "error",
+                [DiagnosticSeverity.Warning]: "warning",
+                [DiagnosticSeverity.Information]: "info",
+                [DiagnosticSeverity.Hint]: "info",
+            };
 
         const diagnostics = params.diagnostics.map(
             async ({ range, message, severity, code, source }) => {
@@ -439,7 +441,7 @@ export class LanguageServerPlugin implements PluginValue {
                     (action): Action => ({
                         name:
                             "command" in action &&
-                                typeof action.command === "object"
+                            typeof action.command === "object"
                                 ? action.command?.title || action.title
                                 : action.title,
                         apply: async () => {
@@ -807,7 +809,9 @@ export class LanguageServerPlugin implements PluginValue {
                 pos,
                 end: pos,
                 create: (_view) => ({ dom }),
-                above: this.featureOptions.signatureHelpOptions?.position === "above",
+                above:
+                    this.featureOptions.signatureHelpOptions?.position ===
+                    "above",
             };
         } catch (error) {
             console.error("Signature help error:", error);
@@ -833,18 +837,6 @@ export class LanguageServerPlugin implements PluginValue {
         view.dispatch({
             effects: setSignatureHelpTooltip.of(tooltip),
         });
-    }
-
-    /**
-     * Hides the signature help tooltip if one is currently shown
-     */
-    public hideSignatureHelpTooltip(view: EditorView) {
-        const tooltip = view.state.field(signatureHelpTooltipField);
-        if (tooltip) {
-            view.dispatch({
-                effects: setSignatureHelpTooltip.of(null),
-            });
-        }
     }
 
     /**
@@ -954,7 +946,10 @@ export class LanguageServerPlugin implements PluginValue {
         docsElement.classList.add("cm-signature-docs");
         docsElement.style.cssText = "margin-top: 4px; color: #666;";
 
-        const formattedContent = formatContents(documentation, this.markdownRenderer);
+        const formattedContent = formatContents(
+            documentation,
+            this.markdownRenderer,
+        );
 
         if (this.allowHTMLContent) {
             docsElement.innerHTML = formattedContent;
@@ -976,7 +971,10 @@ export class LanguageServerPlugin implements PluginValue {
         paramDocsElement.style.cssText =
             "margin-top: 4px; font-style: italic; border-top: 1px solid #eee; padding-top: 4px;";
 
-        const formattedContent = formatContents(documentation, this.markdownRenderer);
+        const formattedContent = formatContents(
+            documentation,
+            this.markdownRenderer,
+        );
 
         if (this.allowHTMLContent) {
             paramDocsElement.innerHTML = formattedContent;
@@ -1262,18 +1260,18 @@ export function languageServerWithClient(options: LanguageServerOptions) {
         );
     }
 
-    const hideSignatureHelpTooltip = (view: EditorView) => {
-        const tooltip = view.state.field(signatureHelpTooltipField);
-        if (tooltip) {
-            view.dispatch({
-                effects: setSignatureHelpTooltip.of(null),
-            });
-        }
-    }
-
     // Add signature help support if enabled
     if (featuresOptions.signatureHelpEnabled) {
         extensions.push(signatureHelpTooltipField);
+
+        const hideSignatureHelpTooltip = (view: EditorView) => {
+            const tooltip = view.state.field(signatureHelpTooltipField);
+            if (tooltip) {
+                view.dispatch({
+                    effects: setSignatureHelpTooltip.of(null),
+                });
+            }
+        };
 
         // Dismiss signature help on mousedown
         extensions.push(

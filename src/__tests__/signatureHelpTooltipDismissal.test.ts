@@ -22,7 +22,8 @@ vi.mock("../utils.js", () => ({
     prefixMatch: vi.fn().mockReturnValue(undefined),
     formatContents: vi.fn().mockImplementation((contents) => {
         if (typeof contents === "string") return contents;
-        if (typeof contents === "object" && contents.value) return contents.value;
+        if (typeof contents === "object" && contents.value)
+            return contents.value;
         return String(contents);
     }),
     isEmptyDocumentation: vi.fn().mockReturnValue(false),
@@ -138,6 +139,9 @@ describe("Signature Help Tooltip Dismissal", () => {
             codeActionsEnabled: true,
             signatureHelpEnabled: true,
             signatureActivateOnTyping: true,
+            signatureHelpOptions: {
+                position: "below",
+            },
         };
 
         plugin = new LanguageServerPlugin({
@@ -174,18 +178,6 @@ describe("Signature Help Tooltip Dismissal", () => {
 
             // Tooltip should now be in state
             expect(getTooltipFromState()).not.toBeNull();
-        });
-
-        it("should hide tooltip via hideSignatureHelpTooltip", async () => {
-            // Show the tooltip
-            await plugin.showSignatureHelpTooltip(mockView, 25, ",");
-            expect(getTooltipFromState()).not.toBeNull();
-
-            // Hide the tooltip
-            plugin.hideSignatureHelpTooltip(mockView);
-
-            // Tooltip should be gone
-            expect(getTooltipFromState()).toBeNull();
         });
 
         it("should replace tooltip when called multiple times", async () => {
@@ -251,6 +243,24 @@ describe("Signature Help Tooltip Dismissal", () => {
                 above: false,
             });
             expect(typeof tooltip?.create).toBe("function");
+        });
+
+        it("should use position above if specified", async () => {
+            featureOptions.signatureHelpOptions = {
+                position: "above",
+            };
+            plugin = new LanguageServerPlugin({
+                client: mockClient,
+                documentUri: "file:///test.py",
+                languageId: "python",
+                view: mockView,
+                featureOptions,
+            });
+            await plugin.showSignatureHelpTooltip(mockView, 25, ",");
+            const tooltip = getTooltipFromState();
+            expect(tooltip).toMatchObject({
+                above: true,
+            });
         });
     });
 });
