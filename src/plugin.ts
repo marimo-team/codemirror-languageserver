@@ -11,6 +11,7 @@ import {
     ViewPlugin,
     hoverTooltip,
     keymap,
+    showTooltip,
 } from "@codemirror/view";
 import { WebSocketTransport } from "@open-rpc/client-js";
 import {
@@ -22,7 +23,7 @@ import type {
     CompletionContext,
     CompletionResult,
 } from "@codemirror/autocomplete";
-import type { Extension } from "@codemirror/state";
+import { type Extension, StateEffect, StateField } from "@codemirror/state";
 import type { PluginValue, ViewUpdate } from "@codemirror/view";
 import type * as LSP from "vscode-languageserver-protocol";
 import type { PublishDiagnosticsParams } from "vscode-languageserver-protocol";
@@ -55,6 +56,37 @@ const logger = console.log;
 function uniqueId() {
     return String(Date.now() + Math.random());
 }
+
+/**
+ * StateEffect for setting or clearing the signature help tooltip
+ */
+export const setSignatureHelpTooltip = StateEffect.define<Tooltip | null>();
+
+/**
+ * StateField that manages the signature help tooltip state
+ * Uses CodeMirror's showTooltip for proper lifecycle management
+ */
+export const signatureHelpTooltipField = StateField.define<Tooltip | null>({
+    create: () => null,
+    update(tooltip, tr) {
+        for (const effect of tr.effects) {
+            if (effect.is(setSignatureHelpTooltip)) {
+                return effect.value;
+            }
+        }
+        // Map tooltip position through document changes to keep it anchored correctly
+        if (tooltip && tr.docChanged) {
+            const newPos = tr.changes.mapPos(tooltip.pos);
+            const newEnd =
+                tooltip.end != null
+                    ? tr.changes.mapPos(tooltip.end)
+                    : undefined;
+            return { ...tooltip, pos: newPos, end: newEnd };
+        }
+        return tooltip;
+    },
+    provide: (field) => showTooltip.from(field),
+});
 
 export class LanguageServerPlugin implements PluginValue {
     private documentVersion: number;
@@ -107,7 +139,9 @@ export class LanguageServerPlugin implements PluginValue {
         this.featureOptions = featureOptions;
         this.onGoToDefinition = onGoToDefinition;
         this.markdownRenderer = markdownRenderer;
-        this.disposeListener = client.onNotification(this.processNotification.bind(this));
+        this.disposeListener = client.onNotification(
+            this.processNotification.bind(this),
+        );
 
         this.initialize({
             documentText: this.view.state.doc.toString(),
@@ -267,7 +301,7 @@ export class LanguageServerPlugin implements PluginValue {
         const token = match
             ? context.matchBefore(match)
             : // Fallback to matching any character
-            context.matchBefore(/[a-zA-Z0-9]+/);
+              context.matchBefore(/[a-zA-Z0-9]+/);
         let { pos } = context;
 
         const sortedItems = sortCompletionItems(
@@ -399,12 +433,12 @@ export class LanguageServerPlugin implements PluginValue {
         }
 
         const severityMap: Record<DiagnosticSeverity, Diagnostic["severity"]> =
-        {
-            [DiagnosticSeverity.Error]: "error",
-            [DiagnosticSeverity.Warning]: "warning",
-            [DiagnosticSeverity.Information]: "info",
-            [DiagnosticSeverity.Hint]: "info",
-        };
+            {
+                [DiagnosticSeverity.Error]: "error",
+                [DiagnosticSeverity.Warning]: "warning",
+                [DiagnosticSeverity.Information]: "info",
+                [DiagnosticSeverity.Hint]: "info",
+            };
 
         const diagnostics = params.diagnostics.map(
             async ({ range, message, severity, code, source }) => {
@@ -416,7 +450,7 @@ export class LanguageServerPlugin implements PluginValue {
                     (action): Action => ({
                         name:
                             "command" in action &&
-                                typeof action.command === "object"
+                            typeof action.command === "object"
                                 ? action.command?.title || action.title
                                 : action.title,
                         apply: async () => {
@@ -784,7 +818,9 @@ export class LanguageServerPlugin implements PluginValue {
                 pos,
                 end: pos,
                 create: (_view) => ({ dom }),
-                above: false,
+                above:
+                    this.featureOptions.signatureHelpOptions?.position ===
+                    "above",
             };
         } catch (error) {
             console.error("Signature help error:", error);
@@ -806,42 +842,10 @@ export class LanguageServerPlugin implements PluginValue {
             triggerCharacter,
         );
 
-        if (tooltip) {
-            // Create and show the tooltip manually
-            const { pos: tooltipPos, create } = tooltip;
-            const tooltipView = create(view);
-
-            const tooltipElement = document.createElement("div");
-            tooltipElement.className = "cm-tooltip cm-signature-tooltip";
-            tooltipElement.style.position = "absolute";
-
-            tooltipElement.appendChild(tooltipView.dom);
-
-            // Position the tooltip
-            const coords = view.coordsAtPos(tooltipPos);
-            if (coords) {
-                tooltipElement.style.left = `${coords.left}px`;
-                tooltipElement.style.top = `${coords.bottom + 5}px`;
-
-                // Add to DOM
-                document.body.appendChild(tooltipElement);
-
-                // Remove after a delay or on editor changes
-                setTimeout(() => {
-                    tooltipElement.remove();
-                }, 10000); // Show for 10 seconds
-
-                // Also remove on any user input
-                const removeTooltip = () => {
-                    tooltipElement.remove();
-                    view.dom.removeEventListener("keydown", removeTooltip);
-                    view.dom.removeEventListener("mousedown", removeTooltip);
-                };
-
-                view.dom.addEventListener("keydown", removeTooltip);
-                view.dom.addEventListener("mousedown", removeTooltip);
-            }
-        }
+        // Dispatch the tooltip (or null to clear) via StateEffect
+        view.dispatch({
+            effects: setSignatureHelpTooltip.of(tooltip),
+        });
     }
 
     /**
@@ -951,7 +955,10 @@ export class LanguageServerPlugin implements PluginValue {
         docsElement.classList.add("cm-signature-docs");
         docsElement.style.cssText = "margin-top: 4px; color: #666;";
 
-        const formattedContent = formatContents(documentation, this.markdownRenderer);
+        const formattedContent = formatContents(
+            documentation,
+            this.markdownRenderer,
+        );
 
         if (this.allowHTMLContent) {
             docsElement.innerHTML = formattedContent;
@@ -973,7 +980,10 @@ export class LanguageServerPlugin implements PluginValue {
         paramDocsElement.style.cssText =
             "margin-top: 4px; font-style: italic; border-top: 1px solid #eee; padding-top: 4px;";
 
-        const formattedContent = formatContents(documentation, this.markdownRenderer);
+        const formattedContent = formatContents(
+            documentation,
+            this.markdownRenderer,
+        );
 
         if (this.allowHTMLContent) {
             paramDocsElement.innerHTML = formattedContent;
@@ -1165,6 +1175,9 @@ export function languageServerWithClient(options: LanguageServerOptions) {
         codeActionsEnabled: true,
         signatureHelpEnabled: true,
         signatureActivateOnTyping: false,
+        signatureHelpOptions: {
+            position: "below",
+        },
         // Override defaults with provided options
         ...options,
     };
@@ -1258,6 +1271,50 @@ export function languageServerWithClient(options: LanguageServerOptions) {
 
     // Add signature help support if enabled
     if (featuresOptions.signatureHelpEnabled) {
+        extensions.push(signatureHelpTooltipField);
+
+        const hideSignatureHelpTooltip = (view: EditorView) => {
+            const tooltip = view.state.field(signatureHelpTooltipField);
+            if (tooltip) {
+                view.dispatch({
+                    effects: setSignatureHelpTooltip.of(null),
+                });
+            }
+        };
+
+        // Dismiss signature help on mousedown
+        extensions.push(
+            EditorView.domEventHandlers({
+                mousedown: (_, view) => {
+                    hideSignatureHelpTooltip(view);
+                    // Return false to let the click proceed normally
+                    return false;
+                },
+            }),
+        );
+
+        extensions.push(
+            keymap.of([
+                {
+                    // Dismiss tooltip when closing paren is typed
+                    key: ")",
+                    run: (view) => {
+                        hideSignatureHelpTooltip(view);
+                        // Return false to let the character be inserted
+                        return false;
+                    },
+                },
+                {
+                    // Or when Escape key is pressed
+                    key: "Escape",
+                    run: (view) => {
+                        hideSignatureHelpTooltip(view);
+                        return true;
+                    },
+                },
+            ]),
+        );
+
         extensions.push(
             EditorView.updateListener.of(async (update) => {
                 if (!(plugin && update.docChanged)) return;
@@ -1270,30 +1327,28 @@ export function languageServerWithClient(options: LanguageServerOptions) {
 
                 const triggerChars = plugin.client.capabilities
                     .signatureHelpProvider.triggerCharacters || ["(", ","];
-                let triggerCharacter: string | undefined;
 
                 // Check if changes include trigger characters
                 const changes = update.changes;
-                let shouldTrigger = false;
                 let triggerPos = -1;
+                let triggerCharacter: string | undefined;
 
-                changes.iterChanges((_fromA, _toA, _fromB, toB, inserted) => {
-                    if (shouldTrigger) return; // Skip if already found a trigger
+                changes.iterChanges((_fromA, _toA, fromB, _toB, inserted) => {
+                    if (triggerPos >= 0) return; // Skip if already found a trigger
 
-                    const text = inserted.toString();
-                    if (!text) return;
+                    const result = getSignatureHelpTriggerPosition(
+                        inserted.toString(),
+                        fromB,
+                        triggerChars,
+                    );
 
-                    for (const char of triggerChars) {
-                        if (text.includes(char)) {
-                            shouldTrigger = true;
-                            triggerPos = toB;
-                            triggerCharacter = char;
-                            break;
-                        }
+                    if (result) {
+                        triggerPos = result.triggerPos;
+                        triggerCharacter = result.triggerCharacter;
                     }
                 });
 
-                if (shouldTrigger && triggerPos >= 0) {
+                if (triggerPos >= 0) {
                     plugin.showSignatureHelpTooltip(
                         update.view,
                         triggerPos,
@@ -1419,4 +1474,37 @@ export function getCompletionTriggerKind(
     }
 
     return { triggerKind, triggerCharacter };
+}
+
+/**
+ * Calculates the trigger position for signature help based on inserted text.
+ *
+ * This function finds the first trigger character in the inserted text and returns
+ * the position right after it. This is important for handling auto-bracket completion
+ * where "()" is inserted at once - we want the position after "(", not after ")".
+ *
+ * @param insertedText The text that was inserted
+ * @param fromB The start position of the insertion in the document
+ * @param triggerChars Array of characters that trigger signature help (e.g., ["(", ","])
+ * @returns Object with triggerPos and triggerCharacter, or null if no trigger found
+ */
+export function getSignatureHelpTriggerPosition(
+    insertedText: string,
+    fromB: number,
+    triggerChars: string[],
+): { triggerPos: number; triggerCharacter: string } | null {
+    if (!insertedText) return null;
+
+    for (const char of triggerChars) {
+        const charIndex = insertedText.indexOf(char);
+        if (charIndex !== -1) {
+            return {
+                // Position right after the trigger character
+                triggerPos: fromB + charIndex + 1,
+                triggerCharacter: char,
+            };
+        }
+    }
+
+    return null;
 }

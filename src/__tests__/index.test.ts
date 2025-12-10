@@ -481,6 +481,8 @@ describe("exports", () => {
             "languageId",
             "languageServer",
             "languageServerWithClient",
+            "setSignatureHelpTooltip",
+            "signatureHelpTooltipField",
           ]
         `);
     });
