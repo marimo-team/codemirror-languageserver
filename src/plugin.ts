@@ -74,6 +74,15 @@ export const signatureHelpTooltipField = StateField.define<Tooltip | null>({
                 return effect.value;
             }
         }
+        // Map tooltip position through document changes to keep it anchored correctly
+        if (tooltip && tr.docChanged) {
+            const newPos = tr.changes.mapPos(tooltip.pos);
+            const newEnd =
+                tooltip.end != null
+                    ? tr.changes.mapPos(tooltip.end)
+                    : undefined;
+            return { ...tooltip, pos: newPos, end: newEnd };
+        }
         return tooltip;
     },
     provide: (field) => showTooltip.from(field),

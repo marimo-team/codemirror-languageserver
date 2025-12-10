@@ -263,4 +263,113 @@ describe("Signature Help Tooltip Dismissal", () => {
             });
         });
     });
+
+    describe("tooltip position mapping on document changes", () => {
+        it("should map tooltip position when text is deleted before it", async () => {
+            // Show tooltip at position 25
+            await plugin.showSignatureHelpTooltip(mockView, 25, ",");
+            const initialTooltip = getTooltipFromState();
+            expect(initialTooltip?.pos).toBe(25);
+
+            // Delete 5 characters at the beginning (positions 0-5)
+            mockView.dispatch({
+                changes: { from: 0, to: 5, insert: "" },
+            });
+
+            // Tooltip position should be mapped: 25 - 5 = 20
+            const mappedTooltip = getTooltipFromState();
+            expect(mappedTooltip?.pos).toBe(20);
+        });
+
+        it("should map tooltip position when text is inserted before it", async () => {
+            // Show tooltip at position 10
+            await plugin.showSignatureHelpTooltip(mockView, 10, "(");
+            const initialTooltip = getTooltipFromState();
+            expect(initialTooltip?.pos).toBe(10);
+
+            // Insert 5 characters at the beginning
+            mockView.dispatch({
+                changes: { from: 0, to: 0, insert: "12345" },
+            });
+
+            // Tooltip position should be mapped: 10 + 5 = 15
+            const mappedTooltip = getTooltipFromState();
+            expect(mappedTooltip?.pos).toBe(15);
+        });
+
+        it("should keep tooltip position unchanged when changes are after it", async () => {
+            // Show tooltip at position 10
+            await plugin.showSignatureHelpTooltip(mockView, 10, "(");
+            const initialTooltip = getTooltipFromState();
+            expect(initialTooltip?.pos).toBe(10);
+
+            // Insert text after the tooltip position
+            mockView.dispatch({
+                changes: { from: 20, to: 20, insert: "new text" },
+            });
+
+            // Tooltip position should remain the same
+            const mappedTooltip = getTooltipFromState();
+            expect(mappedTooltip?.pos).toBe(10);
+        });
+
+        it("should map both pos and end when document changes", async () => {
+            // Show tooltip - it sets both pos and end to the same value
+            await plugin.showSignatureHelpTooltip(mockView, 15, ",");
+            const initialTooltip = getTooltipFromState();
+            expect(initialTooltip?.pos).toBe(15);
+            expect(initialTooltip?.end).toBe(15);
+
+            // Delete 3 characters before the tooltip
+            mockView.dispatch({
+                changes: { from: 5, to: 8, insert: "" },
+            });
+
+            // Both pos and end should be mapped
+            const mappedTooltip = getTooltipFromState();
+            expect(mappedTooltip?.pos).toBe(12);
+            expect(mappedTooltip?.end).toBe(12);
+        });
+
+        it("should preserve tooltip properties when mapping position", async () => {
+            featureOptions.signatureHelpOptions = {
+                position: "above",
+            };
+            plugin = new LanguageServerPlugin({
+                client: mockClient,
+                documentUri: "file:///test.py",
+                languageId: "python",
+                view: mockView,
+                featureOptions,
+            });
+
+            await plugin.showSignatureHelpTooltip(mockView, 20, ",");
+            const initialTooltip = getTooltipFromState();
+            expect(initialTooltip?.above).toBe(true);
+
+            // Make a document change
+            mockView.dispatch({
+                changes: { from: 0, to: 2, insert: "" },
+            });
+
+            // Tooltip should still have 'above' property preserved
+            const mappedTooltip = getTooltipFromState();
+            expect(mappedTooltip?.above).toBe(true);
+            expect(mappedTooltip?.pos).toBe(18);
+        });
+
+        it("should not affect tooltip when no document changes occur", async () => {
+            await plugin.showSignatureHelpTooltip(mockView, 25, ",");
+            const initialTooltip = getTooltipFromState();
+
+            // Dispatch a selection change only (no doc change)
+            mockView.dispatch({
+                selection: { anchor: 10 },
+            });
+
+            // Tooltip should remain exactly the same
+            const tooltip = getTooltipFromState();
+            expect(tooltip).toBe(initialTooltip);
+        });
+    });
 });
