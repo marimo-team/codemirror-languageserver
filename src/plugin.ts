@@ -1168,6 +1168,9 @@ export function languageServerWithClient(options: LanguageServerOptions) {
         codeActionsEnabled: true,
         signatureHelpEnabled: true,
         signatureActivateOnTyping: false,
+        signatureHelpOptions: {
+            position: "below",
+        },
         // Override defaults with provided options
         ...options,
     };
