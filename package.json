@@ -6,7 +6,9 @@
     "sideEffects": false,
     "version": "1.16.5",
     "description": "Language Server Plugin for CodeMirror 6",
-    "files": ["dist"],
+    "files": [
+        "dist"
+    ],
     "exports": {
         "./package.json": "./package.json",
         ".": {
@@ -35,7 +37,7 @@
     },
     "repository": {
         "type": "git",
-        "url": "https://github.com/marimo-team/codemirror-languageserver.git"
+        "url": "git+https://github.com/marimo-team/codemirror-languageserver.git"
     },
     "license": "BSD-3-Clause",
     "peerDependencies": {
