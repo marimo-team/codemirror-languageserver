@@ -128,6 +128,11 @@ export interface FeatureOptions {
     signatureHelpEnabled?: boolean;
     /** Whether to show signature help while typing (default: false) */
     signatureActivateOnTyping?: boolean;
+    /** Additional options for signature help */
+    signatureHelpOptions?: {
+        /** Position of the signature help tooltip (default: "below") */
+        position?: "above" | "below";
+    };
 }
 
 /**
