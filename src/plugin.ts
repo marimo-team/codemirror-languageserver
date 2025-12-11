@@ -88,6 +88,8 @@ export const signatureHelpTooltipField = StateField.define<Tooltip | null>({
     provide: (field) => showTooltip.from(field),
 });
 
+const SIGNATURE_TOOLTIP_MAX_LINES_BACK = 20;
+
 export class LanguageServerPlugin implements PluginValue {
     private documentVersion: number;
     private pluginId: string;
@@ -1315,6 +1317,29 @@ export function languageServerWithClient(options: LanguageServerOptions) {
             ]),
         );
 
+        // Smart dismissal: detect when cursor moves outside the function call context
+        // and dismiss the signature help tooltip.
+        extensions.push(
+            EditorView.updateListener.of((update) => {
+                if (!(plugin && featuresOptions.signatureActivateOnTyping))
+                    return;
+
+                const tooltip = update.state.field(signatureHelpTooltipField);
+                if (!tooltip) return;
+
+                // Only check when selection or doc changed
+                const hasChange = update.selectionSet || update.docChanged;
+                if (!hasChange) return;
+
+                const cursorPos = update.state.selection.main.head;
+
+                // If not inside any parentheses, dismiss
+                if (!isCursorInsideFunctionCall(update.state.doc, cursorPos)) {
+                    hideSignatureHelpTooltip(update.view);
+                }
+            }),
+        );
+
         extensions.push(
             EditorView.updateListener.of(async (update) => {
                 if (!(plugin && update.docChanged)) return;
@@ -1507,4 +1532,45 @@ export function getSignatureHelpTriggerPosition(
     }
 
     return null;
+}
+
+/**
+ * Calculates the parentheses balance in a string.
+ * Used to determine if the cursor is inside a function call.
+ *
+ * @param text The text to scan for parentheses
+ * @returns The balance: positive means inside parens, zero/negative means outside
+ */
+export function getParenthesesBalance(text: string): number {
+    let balance = 0;
+    for (const char of text) {
+        if (char === "(") balance++;
+        else if (char === ")") balance--;
+    }
+    return balance;
+}
+
+/**
+ * Checks if the cursor is inside a function call by counting parentheses balance.
+ * Scans backwards from cursor position up to maxLinesBack lines.
+ *
+ * @param doc The CodeMirror document
+ * @param cursorPos The current cursor position
+ * @param maxLinesBack Maximum number of lines to scan backwards (default: 20)
+ * @returns true if cursor appears to be inside a function call
+ */
+export function isCursorInsideFunctionCall(
+    doc: {
+        lineAt: (pos: number) => { number: number; from: number };
+        line: (n: number) => { from: number };
+        sliceString: (from: number, to: number) => string;
+    },
+    cursorPos: number,
+    maxLinesBack = SIGNATURE_TOOLTIP_MAX_LINES_BACK,
+): boolean {
+    const currentLine = doc.lineAt(cursorPos);
+    const startLine = Math.max(1, currentLine.number - maxLinesBack);
+    const startPos = doc.line(startLine).from;
+    const textToScan = doc.sliceString(startPos, cursorPos);
+    return getParenthesesBalance(textToScan) > 0;
 }
