@@ -483,6 +483,7 @@ describe("exports", () => {
             "languageServerWithClient",
             "setSignatureHelpTooltip",
             "signatureHelpTooltipField",
+            "suppressSignatureHelp",
           ]
         `);
     });
