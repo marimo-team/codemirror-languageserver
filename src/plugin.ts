@@ -23,7 +23,12 @@ import type {
     CompletionContext,
     CompletionResult,
 } from "@codemirror/autocomplete";
-import { type Extension, StateEffect, StateField } from "@codemirror/state";
+import {
+    type Extension,
+    StateEffect,
+    StateField,
+    Annotation,
+} from "@codemirror/state";
 import type { PluginValue, ViewUpdate } from "@codemirror/view";
 import type * as LSP from "vscode-languageserver-protocol";
 import type { PublishDiagnosticsParams } from "vscode-languageserver-protocol";
@@ -87,6 +92,7 @@ export const signatureHelpTooltipField = StateField.define<Tooltip | null>({
     },
     provide: (field) => showTooltip.from(field),
 });
+export const suppressSignatureHelp = Annotation.define<boolean>();
 
 const SIGNATURE_TOOLTIP_MAX_LINES_BACK = 20;
 
@@ -1343,6 +1349,13 @@ export function languageServerWithClient(options: LanguageServerOptions) {
         extensions.push(
             EditorView.updateListener.of(async (update) => {
                 if (!(plugin && update.docChanged)) return;
+
+                if (
+                    update.transactions.some((tr) =>
+                        tr.annotation(suppressSignatureHelp),
+                    )
+                )
+                    return;
 
                 // Early exit if signature help capability is not supported
                 if (!plugin.client.capabilities?.signatureHelpProvider) return;

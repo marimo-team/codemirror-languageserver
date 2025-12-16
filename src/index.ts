@@ -4,6 +4,7 @@ export {
     languageServer,
     signatureHelpTooltipField,
     setSignatureHelpTooltip,
+    suppressSignatureHelp,
 } from "./plugin.js";
 export { LanguageServerClient } from "./lsp.js";
 export {
