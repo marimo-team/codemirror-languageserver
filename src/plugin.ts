@@ -1281,13 +1281,15 @@ export function languageServerWithClient(options: LanguageServerOptions) {
     if (featuresOptions.signatureHelpEnabled) {
         extensions.push(signatureHelpTooltipField);
 
-        const hideSignatureHelpTooltip = (view: EditorView) => {
+        const hideSignatureHelpTooltip = (view: EditorView): boolean => {
             const tooltip = view.state.field(signatureHelpTooltipField);
             if (tooltip) {
                 view.dispatch({
                     effects: setSignatureHelpTooltip.of(null),
                 });
+                return true;
             }
+            return false;
         };
 
         // Dismiss signature help on mousedown
@@ -1316,8 +1318,8 @@ export function languageServerWithClient(options: LanguageServerOptions) {
                     // Or when Escape key is pressed
                     key: "Escape",
                     run: (view) => {
-                        hideSignatureHelpTooltip(view);
-                        return true;
+                        // Return what hideSignatureHelpTooltip returns
+                        return hideSignatureHelpTooltip(view);
                     },
                 },
             ]),
