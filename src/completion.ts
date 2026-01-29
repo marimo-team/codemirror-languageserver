@@ -91,7 +91,7 @@ export function convertCompletionItem(
                 } else {
                     // By default it is PlainText
                     view.dispatch(
-                        insertCompletionText(view.state, label, from, to),
+                        insertCompletionText(view.state, insertText || label, from, to),
                     );
                 }
             }
