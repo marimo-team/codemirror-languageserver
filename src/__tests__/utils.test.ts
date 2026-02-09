@@ -257,6 +257,43 @@ describe("prefixMatch", () => {
         expect(result).toBeInstanceOf(RegExp);
         expect("a").toMatch(result as RegExp);
     });
+
+    it("should match partial prefix for underscore variables", () => {
+        // When items share a prefix like "RE" but user typed "REF",
+        // the regex should match "RE" but NOT "REF"
+        const items: LSP.CompletionItem[] = [
+            { label: "REF_VALUE" },
+            { label: "RESULT" },
+            { label: "RETURN" },
+        ];
+
+        const result = prefixMatch(items);
+        expect(result).toBeInstanceOf(RegExp);
+
+        // The common prefix is "RE", so the regex matches "R" and "RE"
+        expect("R").toMatch(result as RegExp);
+        expect("RE").toMatch(result as RegExp);
+        // "REF" does NOT match because it extends beyond the common prefix
+        // This is the scenario that requires a fallback in the caller
+        expect("REF").not.toMatch(result as RegExp);
+    });
+
+    it("should handle underscore in common prefix", () => {
+        // When all items share a prefix including underscore
+        const items: LSP.CompletionItem[] = [
+            { label: "REF_VALUE" },
+            { label: "REF_COUNT" },
+        ];
+
+        const result = prefixMatch(items);
+        expect(result).toBeInstanceOf(RegExp);
+
+        // Common prefix is "REF_" so all substrings match
+        expect("R").toMatch(result as RegExp);
+        expect("RE").toMatch(result as RegExp);
+        expect("REF").toMatch(result as RegExp);
+        expect("REF_").toMatch(result as RegExp);
+    });
 });
 
 describe("renderMarkdown", () => {
