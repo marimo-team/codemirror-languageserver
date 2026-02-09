@@ -307,9 +307,11 @@ export class LanguageServerPlugin implements PluginValue {
         const match = prefixMatch(items);
 
         const token = match
-            ? context.matchBefore(match)
-            : // Fallback to matching any character
-              context.matchBefore(/[a-zA-Z0-9]+/);
+            ? // Try prefix-based match, then fall back to general word match
+              (context.matchBefore(match) ??
+              context.matchBefore(/[a-zA-Z0-9_]+/))
+            : // Fallback to matching any word character
+              context.matchBefore(/[a-zA-Z0-9_]+/);
         let { pos } = context;
 
         const sortedItems = sortCompletionItems(
