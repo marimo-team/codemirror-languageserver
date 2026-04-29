@@ -24,10 +24,10 @@ import type {
     CompletionResult,
 } from "@codemirror/autocomplete";
 import {
+    Annotation,
     type Extension,
     StateEffect,
     StateField,
-    Annotation,
 } from "@codemirror/state";
 import type { PluginValue, ViewUpdate } from "@codemirror/view";
 import type * as LSP from "vscode-languageserver-protocol";
@@ -99,15 +99,45 @@ const SIGNATURE_TOOLTIP_MAX_LINES_BACK = 20;
 export class LanguageServerPlugin implements PluginValue {
     private documentVersion: number;
     private pluginId: string;
+    /**
+     * The language server client instance.
+     */
     public client: LanguageServerClient;
+    /**
+     * URI of the current document being edited. If not provided, must be passed via the documentUri facet.
+     */
     public documentUri: string;
+    /**
+     * Language identifier (e.g., 'typescript', 'javascript', etc.). If not provided, must be passed via the languageId facet.
+     */
     public languageId: string;
+    /**
+     * The editor view instance.
+     */
     public view: EditorView;
+    /**
+     * Whether to allow HTML content in hover tooltips and other UI elements.
+     */
     public allowHTMLContent: boolean;
+    /**
+     * Whether to prefer snippet insertion for completions when available.
+     */
     public useSnippetOnCompletion: boolean;
+    /**
+     * Whether to send incremental changes to the language server.
+     */
     public sendIncrementalChanges: boolean;
+    /**
+     * Feature options for the language server plugin.
+     */
     public featureOptions: Required<FeatureOptions>;
+    /**
+     * Callback triggered when a go-to-definition action is performed.
+     */
     public onGoToDefinition: ((result: DefinitionResult) => void) | undefined;
+    /**
+     * Callback to render markdown content.
+     */
     public markdownRenderer: (markdown: string) => string;
     private disposeListener?: () => void;
 
@@ -308,10 +338,10 @@ export class LanguageServerPlugin implements PluginValue {
 
         const token = match
             ? // Try prefix-based match, then fall back to general word match
-              (context.matchBefore(match) ??
-              context.matchBefore(/[a-zA-Z0-9_]+/))
+            (context.matchBefore(match) ??
+                context.matchBefore(/[a-zA-Z0-9_]+/))
             : // Fallback to matching any word character
-              context.matchBefore(/[a-zA-Z0-9_]+/);
+            context.matchBefore(/[a-zA-Z0-9_]+/);
         let { pos } = context;
 
         const sortedItems = sortCompletionItems(
@@ -443,12 +473,12 @@ export class LanguageServerPlugin implements PluginValue {
         }
 
         const severityMap: Record<DiagnosticSeverity, Diagnostic["severity"]> =
-            {
-                [DiagnosticSeverity.Error]: "error",
-                [DiagnosticSeverity.Warning]: "warning",
-                [DiagnosticSeverity.Information]: "info",
-                [DiagnosticSeverity.Hint]: "info",
-            };
+        {
+            [DiagnosticSeverity.Error]: "error",
+            [DiagnosticSeverity.Warning]: "warning",
+            [DiagnosticSeverity.Information]: "info",
+            [DiagnosticSeverity.Hint]: "info",
+        };
 
         const diagnostics = params.diagnostics.map(
             async ({ range, message, severity, code, source }) => {
@@ -460,7 +490,7 @@ export class LanguageServerPlugin implements PluginValue {
                     (action): Action => ({
                         name:
                             "command" in action &&
-                            typeof action.command === "object"
+                                typeof action.command === "object"
                                 ? action.command?.title || action.title
                                 : action.title,
                         apply: async () => {
@@ -501,6 +531,12 @@ export class LanguageServerPlugin implements PluginValue {
                     }),
                 );
 
+                const baseSource = source || this.languageId;
+                const formattedSource =
+                    code != null && code !== ""
+                        ? `${baseSource}(${code})`
+                        : baseSource;
+
                 const diagnostic: Diagnostic = {
                     from: posToOffsetOrZero(this.view.state.doc, range.start),
                     to: posToOffsetOrZero(this.view.state.doc, range.end),
@@ -511,7 +547,7 @@ export class LanguageServerPlugin implements PluginValue {
                         dom.innerHTML = this.markdownRenderer(message);
                         return dom;
                     },
-                    source: source || this.languageId,
+                    source: formattedSource,
                     markClass: this.pluginId,
                     actions: codemirrorActions,
                 };
