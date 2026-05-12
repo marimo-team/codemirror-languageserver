@@ -637,4 +637,123 @@ describe("LanguageServerPlugin", () => {
             ).not.toThrow();
         });
     });
+
+    describe("processDiagnostics", () => {
+        let plugin: LanguageServerPlugin;
+
+        beforeEach(() => {
+            plugin = new LanguageServerPlugin({
+                client: mockClient,
+                documentUri: "file:///test.ts",
+                languageId: "typescript",
+                view: mockView,
+                featureOptions,
+            });
+
+            // Avoid real code-action requests during diagnostic processing
+            vi.spyOn(plugin as any, "requestCodeActions").mockResolvedValue(
+                undefined,
+            );
+
+            vi.clearAllMocks();
+        });
+
+        it("includes the diagnostic code in the source when present", async () => {
+            const addDiagnosticsSpy = vi
+                .spyOn(plugin as any, "addDiagnostics")
+                .mockImplementation(() => { });
+
+            await plugin.processDiagnostics({
+                uri: "file:///test.ts",
+                diagnostics: [
+                    {
+                        range: {
+                            start: { line: 0, character: 0 },
+                            end: { line: 0, character: 5 },
+                        },
+                        message: 'Import "os" is not accessed',
+                        source: "basedpyright",
+                        code: "reportUnusedImport",
+                    },
+                ],
+            });
+
+            expect(addDiagnosticsSpy).toHaveBeenCalledTimes(1);
+            const diagnostics = addDiagnosticsSpy.mock.calls[0][0];
+            expect(diagnostics).toHaveLength(1);
+            expect(diagnostics[0].source).toBe(
+                "basedpyright(reportUnusedImport)",
+            );
+        });
+
+        it("leaves the source unchanged when no code is present", async () => {
+            const addDiagnosticsSpy = vi
+                .spyOn(plugin as any, "addDiagnostics")
+                .mockImplementation(() => { });
+
+            await plugin.processDiagnostics({
+                uri: "file:///test.ts",
+                diagnostics: [
+                    {
+                        range: {
+                            start: { line: 0, character: 0 },
+                            end: { line: 0, character: 5 },
+                        },
+                        message: "Some warning",
+                        source: "basedpyright",
+                    },
+                ],
+            });
+
+            const diagnostics = addDiagnosticsSpy.mock.calls[0][0];
+            expect(diagnostics[0].source).toBe("basedpyright");
+        });
+
+        it("falls back to languageId when no source is provided", async () => {
+            const addDiagnosticsSpy = vi
+                .spyOn(plugin as any, "addDiagnostics")
+                .mockImplementation(() => { });
+
+            await plugin.processDiagnostics({
+                uri: "file:///test.ts",
+                diagnostics: [
+                    {
+                        range: {
+                            start: { line: 0, character: 0 },
+                            end: { line: 0, character: 5 },
+                        },
+                        message: "Some error",
+                        code: "E001",
+                    },
+                ],
+            });
+
+            const diagnostics = addDiagnosticsSpy.mock.calls[0][0];
+            expect(diagnostics[0].source).toBe("typescript(E001)");
+        });
+
+        it("coerces numeric codes to strings in the source", async () => {
+            const addDiagnosticsSpy = vi
+                .spyOn(plugin as any, "addDiagnostics")
+                .mockImplementation(() => { });
+
+            await plugin.processDiagnostics({
+                uri: "file:///test.ts",
+                diagnostics: [
+                    {
+                        range: {
+                            start: { line: 0, character: 0 },
+                            end: { line: 0, character: 5 },
+                        },
+                        message: "Type error",
+                        source: "tsserver",
+                        code: 2304,
+                    },
+                ],
+            });
+
+            const diagnostics = addDiagnosticsSpy.mock.calls[0][0];
+            expect(diagnostics[0].source).toBe("tsserver(2304)");
+        });
+    });
 });
