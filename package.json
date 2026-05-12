@@ -40,7 +40,7 @@
         "url": "git+https://github.com/marimo-team/codemirror-languageserver.git"
     },
     "license": "BSD-3-Clause",
-    "packageManager": "pnpm@10.28.2",
+    "packageManager": "pnpm@10.33.4",
     "peerDependencies": {
         "@codemirror/state": "^6",
         "@codemirror/view": "^6"
