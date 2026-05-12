@@ -77,7 +77,10 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - name: ⎔ Setup Node.js
+      - name: ⎔ Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+            - name: ⎔ Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
@@ -89,7 +92,7 @@ jobs:
           name: package
 
       - name: 📦 Publish to NPM
-        run: npm publish --ignore-scripts
+        run: pnpm publish --no-git-checks --ignore-scripts
         env:
           NODE_AUTH_TOKEN: "" # Clear placeholder set by setup-node to enable OIDC
 
