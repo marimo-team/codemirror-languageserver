@@ -59,6 +59,32 @@ describe("getCompletionTriggerKind", () => {
         });
     });
 
+    it.each(["from dataclasses import ", "value = "])(
+        "should return Invoked for explicit completion with an empty prefix in %j",
+        (text) => {
+            const context = createMockContext(text, text.length, true);
+
+            const result = getCompletionTriggerKind(context, [], undefined);
+
+            expect(result).toEqual({
+                triggerKind: CompletionTriggerKind.Invoked,
+                triggerCharacter: undefined,
+            });
+        },
+    );
+
+    it("should bypass a custom match pattern for explicit completion", () => {
+        const text = "from dataclasses import ";
+        const context = createMockContext(text, text.length, true);
+
+        const result = getCompletionTriggerKind(context, [], /@\w+$/);
+
+        expect(result).toEqual({
+            triggerKind: CompletionTriggerKind.Invoked,
+            triggerCharacter: undefined,
+        });
+    });
+
     it("should return Invoked for word completion", () => {
         const context = createMockContext("hello", 5, false);
         const result = getCompletionTriggerKind(
@@ -94,6 +120,15 @@ describe("getCompletionTriggerKind", () => {
             [".", "(", ","],
             undefined,
         );
+
+        expect(result).toBeNull();
+    });
+
+    it("should return null for implicit completion after import whitespace", () => {
+        const text = "from dataclasses import ";
+        const context = createMockContext(text, text.length, false);
+
+        const result = getCompletionTriggerKind(context, [], undefined);
 
         expect(result).toBeNull();
     });
