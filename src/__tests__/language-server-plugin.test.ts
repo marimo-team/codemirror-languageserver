@@ -121,7 +121,7 @@ describe("LanguageServerPlugin", () => {
         mockClient.textDocumentCompletion = vi.fn();
         mockClient.textDocumentDefinition = vi.fn();
         mockClient.completionItemResolve = vi.fn();
-        mockClient.onNotification = vi.fn().mockReturnValue(() => { });
+        mockClient.onNotification = vi.fn().mockReturnValue(() => {});
 
         // Create a mock view
         mockView = new EditorView({
@@ -328,7 +328,7 @@ describe("LanguageServerPlugin", () => {
 
             const consoleSpy = vi
                 .spyOn(console, "error")
-                .mockImplementation(() => { });
+                .mockImplementation(() => {});
 
             const changes: LSP.TextDocumentContentChangeEvent[] = [
                 { text: "new content" },
@@ -446,7 +446,7 @@ describe("LanguageServerPlugin", () => {
             plugin.featureOptions.completionEnabled = false;
 
             const result = await plugin.requestCompletion(
-                {} as any,
+                {} as never,
                 { line: 0, character: 0 },
                 {
                     triggerKind: CompletionTriggerKind.Invoked,
@@ -461,7 +461,7 @@ describe("LanguageServerPlugin", () => {
             mockClient.ready = false;
 
             const result = await plugin.requestCompletion(
-                {} as any,
+                {} as never,
                 { line: 0, character: 0 },
                 {
                     triggerKind: CompletionTriggerKind.Invoked,
@@ -476,7 +476,7 @@ describe("LanguageServerPlugin", () => {
             mockClient.capabilities = {};
 
             const result = await plugin.requestCompletion(
-                {} as any,
+                {} as never,
                 { line: 0, character: 0 },
                 {
                     triggerKind: CompletionTriggerKind.Invoked,
@@ -491,7 +491,7 @@ describe("LanguageServerPlugin", () => {
             mockClient.textDocumentCompletion = vi.fn().mockResolvedValue(null);
 
             const result = await plugin.requestCompletion(
-                {} as any,
+                {} as never,
                 { line: 0, character: 0 },
                 {
                     triggerKind: CompletionTriggerKind.Invoked,
@@ -580,7 +580,7 @@ describe("LanguageServerPlugin", () => {
 
         it("should process diagnostics notification", () => {
             const processDiagnosticsSpy = vi.spyOn(
-                plugin as any,
+                plugin as never,
                 "processDiagnostics",
             );
 
@@ -603,7 +603,7 @@ describe("LanguageServerPlugin", () => {
         it("should handle unknown notification methods", () => {
             const notification = {
                 jsonrpc: "2.0" as const,
-                method: "unknown/method" as any,
+                method: "unknown/method" as never,
                 params: {},
             };
 
@@ -616,7 +616,7 @@ describe("LanguageServerPlugin", () => {
 
         it("should handle errors gracefully", () => {
             // Mock processDiagnostics to throw an error
-            vi.spyOn(plugin as any, "processDiagnostics").mockImplementation(
+            vi.spyOn(plugin as never, "processDiagnostics").mockImplementation(
                 () => {
                     throw new Error("Test error");
                 },
@@ -651,7 +651,7 @@ describe("LanguageServerPlugin", () => {
             });
 
             // Avoid real code-action requests during diagnostic processing
-            vi.spyOn(plugin as any, "requestCodeActions").mockResolvedValue(
+            vi.spyOn(plugin as never, "requestCodeActions").mockResolvedValue(
                 undefined,
             );
 
@@ -660,8 +660,8 @@ describe("LanguageServerPlugin", () => {
 
         it("includes the diagnostic code in the source when present", async () => {
             const addDiagnosticsSpy = vi
-                .spyOn(plugin as any, "addDiagnostics")
-                .mockImplementation(() => { });
+                .spyOn(plugin as never, "addDiagnostics")
+                .mockImplementation(() => {});
 
             await plugin.processDiagnostics({
                 uri: "file:///test.ts",
@@ -688,8 +688,8 @@ describe("LanguageServerPlugin", () => {
 
         it("leaves the source unchanged when no code is present", async () => {
             const addDiagnosticsSpy = vi
-                .spyOn(plugin as any, "addDiagnostics")
-                .mockImplementation(() => { });
+                .spyOn(plugin as never, "addDiagnostics")
+                .mockImplementation(() => {});
 
             await plugin.processDiagnostics({
                 uri: "file:///test.ts",
@@ -711,8 +711,8 @@ describe("LanguageServerPlugin", () => {
 
         it("falls back to languageId when no source is provided", async () => {
             const addDiagnosticsSpy = vi
-                .spyOn(plugin as any, "addDiagnostics")
-                .mockImplementation(() => { });
+                .spyOn(plugin as never, "addDiagnostics")
+                .mockImplementation(() => {});
 
             await plugin.processDiagnostics({
                 uri: "file:///test.ts",
@@ -734,8 +734,8 @@ describe("LanguageServerPlugin", () => {
 
         it("coerces numeric codes to strings in the source", async () => {
             const addDiagnosticsSpy = vi
-                .spyOn(plugin as any, "addDiagnostics")
-                .mockImplementation(() => { });
+                .spyOn(plugin as never, "addDiagnostics")
+                .mockImplementation(() => {});
 
             await plugin.processDiagnostics({
                 uri: "file:///test.ts",

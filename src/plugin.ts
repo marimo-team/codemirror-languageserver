@@ -338,10 +338,10 @@ export class LanguageServerPlugin implements PluginValue {
 
         const token = match
             ? // Try prefix-based match, then fall back to general word match
-            (context.matchBefore(match) ??
-                context.matchBefore(/[a-zA-Z0-9_]+/))
+              (context.matchBefore(match) ??
+              context.matchBefore(/[a-zA-Z0-9_]+/))
             : // Fallback to matching any word character
-            context.matchBefore(/[a-zA-Z0-9_]+/);
+              context.matchBefore(/[a-zA-Z0-9_]+/);
         let { pos } = context;
 
         const sortedItems = sortCompletionItems(
@@ -473,12 +473,12 @@ export class LanguageServerPlugin implements PluginValue {
         }
 
         const severityMap: Record<DiagnosticSeverity, Diagnostic["severity"]> =
-        {
-            [DiagnosticSeverity.Error]: "error",
-            [DiagnosticSeverity.Warning]: "warning",
-            [DiagnosticSeverity.Information]: "info",
-            [DiagnosticSeverity.Hint]: "info",
-        };
+            {
+                [DiagnosticSeverity.Error]: "error",
+                [DiagnosticSeverity.Warning]: "warning",
+                [DiagnosticSeverity.Information]: "info",
+                [DiagnosticSeverity.Hint]: "info",
+            };
 
         const diagnostics = params.diagnostics.map(
             async ({ range, message, severity, code, source }) => {
@@ -490,7 +490,7 @@ export class LanguageServerPlugin implements PluginValue {
                     (action): Action => ({
                         name:
                             "command" in action &&
-                                typeof action.command === "object"
+                            typeof action.command === "object"
                                 ? action.command?.title || action.title
                                 : action.title,
                         apply: async () => {

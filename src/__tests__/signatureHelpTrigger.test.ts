@@ -141,11 +141,7 @@ describe("getSignatureHelpTriggerPosition", () => {
 
     describe("with custom trigger characters", () => {
         it("should work with angle brackets", () => {
-            const result = getSignatureHelpTriggerPosition(
-                "<>",
-                10,
-                ["<"],
-            );
+            const result = getSignatureHelpTriggerPosition("<>", 10, ["<"]);
 
             expect(result).toEqual({
                 triggerPos: 11,
@@ -155,11 +151,10 @@ describe("getSignatureHelpTriggerPosition", () => {
 
         it("should respect trigger character order", () => {
             // If trigger chars are [",", "("], comma should be found first
-            const result = getSignatureHelpTriggerPosition(
-                "foo(a, b)",
-                0,
-                [",", "("],
-            );
+            const result = getSignatureHelpTriggerPosition("foo(a, b)", 0, [
+                ",",
+                "(",
+            ]);
 
             expect(result).toEqual({
                 triggerPos: 6, // Position after first ","
@@ -168,4 +163,3 @@ describe("getSignatureHelpTriggerPosition", () => {
         });
     });
 });
-

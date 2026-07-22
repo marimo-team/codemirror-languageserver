@@ -6,8 +6,9 @@ export default defineConfig({
         globals: true,
         environment: "jsdom",
         coverage: {
-            enabled: false, // Enable explicitly with --coverage flag
-            reporter: ["text", "json", "html"],
+            enabled: true,
+            reporter: ["text", "html", "json-summary", "json"],
+            reportOnFailure: true,
             exclude: [
                 "coverage/**",
                 "dist/**",
