@@ -6,9 +6,7 @@
     "sideEffects": false,
     "version": "1.16.12",
     "description": "Language Server Plugin for CodeMirror 6",
-    "files": [
-        "dist"
-    ],
+    "files": ["dist"],
     "exports": {
         "./package.json": "./package.json",
         ".": {
@@ -27,6 +25,7 @@
         "build": "tsc",
         "build:demo": "vite build",
         "lint": "biome check --write",
+        "lint:ci": "biome check",
         "typecheck": "tsc --noEmit",
         "preview": "vite preview",
         "test": "vitest"
@@ -55,7 +54,8 @@
         "jsdom": "26.1.0",
         "typescript": "5.9.3",
         "vite": "6.4.2",
-        "vitest": "3.2.4"
+        "vitest": "3.2.4",
+        "@vitest/coverage-v8": "3.2.4"
     },
     "dependencies": {
         "@codemirror/autocomplete": "^6.18.4",

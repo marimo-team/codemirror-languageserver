@@ -141,6 +141,8 @@ describe("formatContents", () => {
             kind: "markdown",
             value: "Custom renderer test",
         };
-        expect(formatContents(content, customRenderer)).toBe("<p>Custom renderer test</p>");
+        expect(formatContents(content, customRenderer)).toBe(
+            "<p>Custom renderer test</p>",
+        );
     });
 });

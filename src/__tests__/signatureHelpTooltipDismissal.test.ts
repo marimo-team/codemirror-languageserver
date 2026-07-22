@@ -5,8 +5,8 @@ import type { LanguageServerClient } from "../lsp.js";
 import type { FeatureOptions } from "../lsp.js";
 import {
     LanguageServerPlugin,
-    signatureHelpTooltipField,
     setSignatureHelpTooltip,
+    signatureHelpTooltipField,
 } from "../plugin.js";
 
 // Mock utils functions

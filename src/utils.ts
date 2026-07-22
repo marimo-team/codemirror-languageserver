@@ -262,7 +262,7 @@ export function eventsFromChangeSet(
 
     // Sort in reverse order to prevent index shift
     events.sort((a, b) => {
-        if (!a.range) return 1;  // Sort `a` after `b`.
+        if (!a.range) return 1; // Sort `a` after `b`.
         if (!b.range) return -1; // Sort `b` after `a`.
 
         const aLine = a.range.start.line ?? -1;

@@ -76,10 +76,10 @@ export interface LanguageServerClientOptions {
      * Can be an object or a function that modifies the default capabilities.
      */
     capabilities?:
-    | LSP.InitializeParams["capabilities"]
-    | ((
-        defaultCapabilities: LSP.InitializeParams["capabilities"],
-    ) => LSP.InitializeParams["capabilities"]);
+        | LSP.InitializeParams["capabilities"]
+        | ((
+              defaultCapabilities: LSP.InitializeParams["capabilities"],
+          ) => LSP.InitializeParams["capabilities"]);
     /** Additional initialization options to send to the language server */
     initializationOptions?: LSP.InitializeParams["initializationOptions"];
     getWorkspaceConfiguration?: (
@@ -190,7 +190,7 @@ export interface LanguageServerOptions extends FeatureOptions {
  */
 export interface LanguageServerWebsocketOptions
     extends Omit<LanguageServerOptions, "client">,
-    Omit<LanguageServerClientOptions, "transport"> {
+        Omit<LanguageServerClientOptions, "transport"> {
     /** WebSocket URI for connecting to the language server */
     serverUri: `ws://${string}` | `wss://${string}`;
 }
@@ -463,6 +463,8 @@ export class LanguageServerClient {
     }
 
     protected processNotification(notification: Notification) {
-        this.notificationListeners.forEach((l) => l(notification));
+        for (const l of this.notificationListeners) {
+            l(notification);
+        }
     }
 }

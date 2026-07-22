@@ -91,7 +91,12 @@ export function convertCompletionItem(
                 } else {
                     // By default it is PlainText
                     view.dispatch(
-                        insertCompletionText(view.state, insertText || label, from, to),
+                        insertCompletionText(
+                            view.state,
+                            insertText || label,
+                            from,
+                            to,
+                        ),
                     );
                 }
             }
@@ -148,9 +153,15 @@ export function convertCompletionItem(
                     return null;
                 }
                 if (options.allowHTMLContent) {
-                    dom.innerHTML = formatContents(content, options.markdownRenderer);
+                    dom.innerHTML = formatContents(
+                        content,
+                        options.markdownRenderer,
+                    );
                 } else {
-                    dom.textContent = formatContents(content, options.markdownRenderer);
+                    dom.textContent = formatContents(
+                        content,
+                        options.markdownRenderer,
+                    );
                 }
                 return dom;
             } catch (e) {
@@ -163,9 +174,15 @@ export function convertCompletionItem(
                     const dom = document.createElement("div");
                     dom.classList.add("documentation");
                     if (options.allowHTMLContent) {
-                        dom.innerHTML = formatContents(documentation, options.markdownRenderer);
+                        dom.innerHTML = formatContents(
+                            documentation,
+                            options.markdownRenderer,
+                        );
                     } else {
-                        dom.textContent = formatContents(documentation, options.markdownRenderer);
+                        dom.textContent = formatContents(
+                            documentation,
+                            options.markdownRenderer,
+                        );
                     }
                     return dom;
                 }
@@ -178,9 +195,15 @@ export function convertCompletionItem(
             const dom = document.createElement("div");
             dom.classList.add("documentation");
             if (options.allowHTMLContent) {
-                dom.innerHTML = formatContents(documentation, options.markdownRenderer);
+                dom.innerHTML = formatContents(
+                    documentation,
+                    options.markdownRenderer,
+                );
             } else {
-                dom.textContent = formatContents(documentation, options.markdownRenderer);
+                dom.textContent = formatContents(
+                    documentation,
+                    options.markdownRenderer,
+                );
             }
             return dom;
         };

@@ -598,8 +598,8 @@ describe("longestCommonPrefix", () => {
     });
 
     it("should handle undefined/null values gracefully", () => {
-        expect(longestCommonPrefix(["test", null as any])).toBe("");
-        expect(longestCommonPrefix(["test", undefined as any])).toBe("");
+        expect(longestCommonPrefix(["test", null as never])).toBe("");
+        expect(longestCommonPrefix(["test", undefined as never])).toBe("");
     });
 
     it("should be stable regardless of input order", () => {
