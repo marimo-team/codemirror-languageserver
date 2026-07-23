@@ -15,11 +15,10 @@ export function posToOffset(
         }
         return;
     }
-    const offset = doc.line(pos.line + 1).from + pos.character;
-    if (offset > doc.length) {
-        return;
-    }
-    return offset;
+    const line = doc.line(pos.line + 1);
+    // Per LSP spec, a character beyond the line length defaults back to the
+    // line length, so clamp instead of spilling into the next line
+    return Math.min(line.from + pos.character, line.to);
 }
 
 export function posToOffsetOrZero(
@@ -84,7 +83,68 @@ export function formatContents(
     if (typeof contents === "string") {
         return contents;
     }
+    if (isLSPMarkedStringObject(contents)) {
+        // Legacy MarkedString form: render as a fenced code block
+        return markdownRenderer(
+            `\`\`\`${contents.language}\n${contents.value}\n\`\`\``,
+        );
+    }
     return "";
+}
+
+/**
+ * Extract the raw text of documentation contents, without rendering
+ * markdown to HTML. Used when HTML content is not allowed.
+ */
+export function formatPlainTextContents(
+    contents:
+        | LSP.MarkupContent
+        | LSP.MarkedString
+        | LSP.MarkedString[]
+        | undefined,
+): string {
+    if (!contents) {
+        return "";
+    }
+    if (isLSPMarkupContent(contents)) {
+        return contents.value;
+    }
+    if (Array.isArray(contents)) {
+        return contents
+            .map((c) => formatPlainTextContents(c))
+            .filter(Boolean)
+            .join("\n\n");
+    }
+    if (typeof contents === "string") {
+        return contents;
+    }
+    if (isLSPMarkedStringObject(contents)) {
+        return contents.value;
+    }
+    return "";
+}
+
+/**
+ * Render documentation contents into an element, as HTML when allowed and
+ * as plain text otherwise (never showing HTML markup as literal text).
+ */
+export function renderDocumentation(
+    element: HTMLElement,
+    contents:
+        | LSP.MarkupContent
+        | LSP.MarkedString
+        | LSP.MarkedString[]
+        | undefined,
+    options: {
+        allowHTMLContent: boolean;
+        markdownRenderer?: (markdown: string) => string;
+    },
+): void {
+    if (options.allowHTMLContent) {
+        element.innerHTML = formatContents(contents, options.markdownRenderer);
+    } else {
+        element.textContent = formatPlainTextContents(contents);
+    }
 }
 
 /**
@@ -159,6 +219,17 @@ export function isLSPMarkupContent(
     contents: LSP.MarkupContent | LSP.MarkedString | LSP.MarkedString[],
 ): contents is LSP.MarkupContent {
     return (contents as LSP.MarkupContent).kind !== undefined;
+}
+
+function isLSPMarkedStringObject(
+    contents: LSP.MarkupContent | LSP.MarkedString | LSP.MarkedString[],
+): contents is { language: string; value: string } {
+    return (
+        typeof contents === "object" &&
+        contents !== null &&
+        "language" in contents &&
+        "value" in contents
+    );
 }
 
 export function showErrorMessage(view: EditorView, message: string) {

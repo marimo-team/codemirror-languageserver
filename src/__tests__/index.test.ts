@@ -75,10 +75,8 @@ describe("LanguageServer", () => {
                 doc.length,
             );
 
-            // Test invalid positions
-            expect(
-                posToOffset(doc, { line: 0, character: 50 }),
-            ).toBeUndefined();
+            // Character overflow clamps to the end of the line (LSP spec)
+            expect(posToOffset(doc, { line: 0, character: 50 })).toBe(10);
         });
 
         it("should convert offset to position correctly", async () => {

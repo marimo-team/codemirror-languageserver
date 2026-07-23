@@ -43,6 +43,7 @@ export interface LSPNotifyMap {
     initialized: LSP.InitializedParams;
     "textDocument/didChange": LSP.DidChangeTextDocumentParams;
     "textDocument/didOpen": LSP.DidOpenTextDocumentParams;
+    "textDocument/didClose": LSP.DidCloseTextDocumentParams;
 }
 
 // Server to client
@@ -211,6 +212,9 @@ export class LanguageServerClient {
     public clientCapabilities: LanguageServerClientOptions["capabilities"];
 
     private notificationListeners: Set<(n: Notification) => void> = new Set();
+    private webSocketConnection?: WebSocketTransport["connection"];
+    private webSocketMessageHandler?: (message: { data: unknown }) => void;
+    private isClosed = false;
 
     constructor({
         rootUri,
@@ -238,38 +242,61 @@ export class LanguageServerClient {
 
         const webSocketTransport = this.transport as WebSocketTransport;
         if (webSocketTransport?.connection) {
+            this.webSocketConnection = webSocketTransport.connection;
+            this.webSocketMessageHandler = (message: { data: unknown }) => {
+                if (typeof message.data !== "string") {
+                    return;
+                }
+                // biome-ignore lint/suspicious/noExplicitAny: raw JSON-RPC frame
+                let data: any;
+                try {
+                    data = JSON.parse(message.data);
+                } catch {
+                    // Ignore non-JSON frames (e.g. keepalive pings)
+                    return;
+                }
+                if (data == null || typeof data !== "object") {
+                    return;
+                }
+                // A JSON-RPC id of 0 is valid, so check for presence, not truthiness
+                const isRequest = data.id !== undefined && data.id !== null;
+                if (
+                    data.method === "workspace/configuration" &&
+                    isRequest &&
+                    getWorkspaceConfiguration
+                ) {
+                    webSocketTransport.connection.send(
+                        JSON.stringify({
+                            jsonrpc: "2.0",
+                            id: data.id,
+                            result: getWorkspaceConfiguration(data.params),
+                        }),
+                    );
+                    // XXX(hjr265): Need a better way to do this. Relevant issue:
+                    // https://github.com/FurqanSoftware/codemirror-languageserver/issues/9
+                } else if (data.method && isRequest) {
+                    webSocketTransport.connection.send(
+                        JSON.stringify({
+                            jsonrpc: "2.0",
+                            id: data.id,
+                            result: null,
+                        }),
+                    );
+                }
+            };
             webSocketTransport.connection.addEventListener(
                 "message",
                 // @ts-ignore
-                (message: { data: string }) => {
-                    const data = JSON.parse(message.data);
-                    if (
-                        data.method === "workspace/configuration" &&
-                        getWorkspaceConfiguration
-                    ) {
-                        webSocketTransport.connection.send(
-                            JSON.stringify({
-                                jsonrpc: "2.0",
-                                id: data.id,
-                                result: getWorkspaceConfiguration(data.params),
-                            }),
-                        );
-                        // XXX(hjr265): Need a better way to do this. Relevant issue:
-                        // https://github.com/FurqanSoftware/codemirror-languageserver/issues/9
-                    } else if (data.method && data.id) {
-                        webSocketTransport.connection.send(
-                            JSON.stringify({
-                                jsonrpc: "2.0",
-                                id: data.id,
-                                result: null,
-                            }),
-                        );
-                    }
-                },
+                this.webSocketMessageHandler,
             );
         }
 
         this.initializePromise = this.initialize();
+        // Keep a failed initialize from becoming an unhandled rejection;
+        // awaiters of initializePromise still observe the rejection themselves
+        this.initializePromise.catch((error) => {
+            console.error("Language server initialization failed", error);
+        });
     }
 
     protected getInitializationOptions(): LSP.InitializeParams["initializationOptions"] {
@@ -372,12 +399,29 @@ export class LanguageServerClient {
             this.getInitializationOptions(),
             this.timeout * 3,
         );
+        // The client may have been closed while initialize was in flight;
+        // don't send `initialized` on a dead transport or revive `ready`
+        if (this.isClosed) {
+            return;
+        }
         this.capabilities = capabilities;
         this.notify("initialized", {});
         this.ready = true;
     }
 
     public close() {
+        this.isClosed = true;
+        this.ready = false;
+        this.notificationListeners.clear();
+        if (this.webSocketConnection && this.webSocketMessageHandler) {
+            this.webSocketConnection.removeEventListener(
+                "message",
+                // @ts-ignore
+                this.webSocketMessageHandler,
+            );
+            this.webSocketConnection = undefined;
+            this.webSocketMessageHandler = undefined;
+        }
         this.client.close();
     }
 
@@ -387,6 +431,10 @@ export class LanguageServerClient {
 
     public textDocumentDidChange(params: LSP.DidChangeTextDocumentParams) {
         return this.notify("textDocument/didChange", params);
+    }
+
+    public textDocumentDidClose(params: LSP.DidCloseTextDocumentParams) {
+        return this.notify("textDocument/didClose", params);
     }
 
     public async textDocumentHover(params: LSP.HoverParams) {
@@ -464,7 +512,12 @@ export class LanguageServerClient {
 
     protected processNotification(notification: Notification) {
         for (const l of this.notificationListeners) {
-            l(notification);
+            try {
+                l(notification);
+            } catch (error) {
+                // One faulty listener must not starve the others
+                console.error("Notification listener failed", error);
+            }
         }
     }
 }

@@ -17,6 +17,7 @@ import { WebSocketTransport } from "@open-rpc/client-js";
 import {
     CompletionTriggerKind,
     DiagnosticSeverity,
+    TextDocumentSyncKind,
 } from "vscode-languageserver-protocol";
 
 import type {
@@ -44,12 +45,12 @@ import {
 } from "./lsp.js";
 import {
     eventsFromChangeSet,
-    formatContents,
     isEmptyDocumentation,
     offsetToPos,
     posToOffset,
     posToOffsetOrZero,
     prefixMatch,
+    renderDocumentation,
     renderMarkdown,
     showErrorMessage,
 } from "./utils.js";
@@ -140,6 +141,8 @@ export class LanguageServerPlugin implements PluginValue {
      */
     public markdownRenderer: (markdown: string) => string;
     private disposeListener?: () => void;
+    private destroyed = false;
+    private documentOpened = false;
 
     constructor(opts: {
         client: LanguageServerClient;
@@ -181,8 +184,8 @@ export class LanguageServerPlugin implements PluginValue {
             this.processNotification.bind(this),
         );
 
-        this.initialize({
-            documentText: this.view.state.doc.toString(),
+        this.initialize().catch((error) => {
+            console.error("Language server initialization failed", error);
         });
     }
 
@@ -196,7 +199,14 @@ export class LanguageServerPlugin implements PluginValue {
             return;
         }
 
-        if (this.sendIncrementalChanges) {
+        const syncKind = this.resolveTextDocumentSyncKind();
+        if (syncKind === TextDocumentSyncKind.None) {
+            return;
+        }
+        if (
+            this.sendIncrementalChanges &&
+            syncKind === TextDocumentSyncKind.Incremental
+        ) {
             this.sendChanges(eventsFromChangeSet(doc, changes));
         } else {
             this.sendChanges([{ text: state.doc.toString() }]);
@@ -204,21 +214,61 @@ export class LanguageServerPlugin implements PluginValue {
     }
 
     public destroy() {
+        this.destroyed = true;
         this.disposeListener?.();
+        this.disposeListener = undefined;
+        // Only close a document we actually opened - a view torn down during
+        // its initial async tick may never have sent didOpen
+        if (this.documentOpened && this.client.ready) {
+            Promise.resolve(
+                this.client.textDocumentDidClose({
+                    textDocument: { uri: this.documentUri },
+                }),
+            ).catch((error) => {
+                console.error("Failed to send didClose", error);
+            });
+        }
     }
 
-    public async initialize({ documentText }: { documentText: string }) {
+    public async initialize({ documentText }: { documentText?: string } = {}) {
         if (this.client.initializePromise) {
             await this.client.initializePromise;
+        }
+        if (this.destroyed) {
+            return;
         }
         await this.client.textDocumentDidOpen({
             textDocument: {
                 uri: this.documentUri,
                 languageId: this.languageId,
-                text: documentText,
+                // Read the document at didOpen time so edits made while the
+                // server was still initializing are not lost
+                text: documentText ?? this.view.state.doc.toString(),
                 version: this.documentVersion,
             },
         });
+        this.documentOpened = true;
+    }
+
+    /**
+     * The sync kind the server supports; incremental changes may only be
+     * sent when the server announced Incremental sync.
+     */
+    private resolveTextDocumentSyncKind(): TextDocumentSyncKind {
+        const sync = this.client.capabilities?.textDocumentSync;
+        if (sync == null) {
+            // Server did not advertise the capability; honor the
+            // configured behavior
+            return this.sendIncrementalChanges
+                ? TextDocumentSyncKind.Incremental
+                : TextDocumentSyncKind.Full;
+        }
+        if (typeof sync === "number") {
+            return sync;
+        }
+        // Per the LSP spec, an omitted `change` in TextDocumentSyncOptions
+        // means the server wants no change notifications
+        return sync.change ?? TextDocumentSyncKind.None;
     }
 
     public async sendChanges(
@@ -283,11 +333,10 @@ export class LanguageServerPlugin implements PluginValue {
         }
         const dom = document.createElement("div");
         dom.classList.add("documentation", "cm-lsp-hover-tooltip");
-        if (this.allowHTMLContent) {
-            dom.innerHTML = formatContents(contents, this.markdownRenderer);
-        } else {
-            dom.textContent = formatContents(contents, this.markdownRenderer);
-        }
+        renderDocumentation(dom, contents, {
+            allowHTMLContent: this.allowHTMLContent,
+            markdownRenderer: this.markdownRenderer,
+        });
         return {
             pos,
             end,
@@ -455,13 +504,12 @@ export class LanguageServerPlugin implements PluginValue {
             return;
         }
 
-        // If the version is newer, clear the diagnostics and update the last seen version
-        if (
-            params.version != null &&
-            params.version > this.lastSeenDiagnosticsVersion
-        ) {
+        if (params.version != null) {
+            // Ignore stale publishes delivered out of order
+            if (params.version < this.lastSeenDiagnosticsVersion) {
+                return;
+            }
             this.lastSeenDiagnosticsVersion = params.version;
-            this.clearDiagnostics();
         }
 
         // Check if diagnostics are enabled
@@ -480,8 +528,26 @@ export class LanguageServerPlugin implements PluginValue {
                 [DiagnosticSeverity.Hint]: "info",
             };
 
+        // Snapshot the document so ranges are resolved against the text the
+        // server published for, even while code actions load below
+        const doc = this.view.state.doc;
+
         const diagnostics = params.diagnostics.map(
-            async ({ range, message, severity, code, source }) => {
+            async ({
+                range,
+                message,
+                severity,
+                code,
+                source,
+            }): Promise<Diagnostic | null> => {
+                const from = posToOffset(doc, range.start);
+                const to = posToOffset(doc, range.end);
+                if (from == null || to == null || from > to) {
+                    // The range does not exist in this document (e.g. a
+                    // stale publish); dropping it beats misplacing it
+                    return null;
+                }
+
                 const actions = await this.requestCodeActions(range, [
                     code as string,
                 ]);
@@ -502,24 +568,7 @@ export class LanguageServerPlugin implements PluginValue {
                                     return;
                                 }
 
-                                // Apply workspace edit
-                                for (const change of changes) {
-                                    this.view.dispatch(
-                                        this.view.state.update({
-                                            changes: {
-                                                from: posToOffsetOrZero(
-                                                    this.view.state.doc,
-                                                    change.range.start,
-                                                ),
-                                                to: posToOffset(
-                                                    this.view.state.doc,
-                                                    change.range.end,
-                                                ),
-                                                insert: change.newText,
-                                            },
-                                        }),
-                                    );
-                                }
+                                this.applyEdits(this.view, changes);
                             }
 
                             if ("command" in action && action.command) {
@@ -538,13 +587,17 @@ export class LanguageServerPlugin implements PluginValue {
                         : baseSource;
 
                 const diagnostic: Diagnostic = {
-                    from: posToOffsetOrZero(this.view.state.doc, range.start),
-                    to: posToOffsetOrZero(this.view.state.doc, range.end),
+                    from,
+                    to,
                     severity: severityMap[severity ?? DiagnosticSeverity.Error],
                     message: message,
                     renderMessage: () => {
                         const dom = document.createElement("div");
-                        dom.innerHTML = this.markdownRenderer(message);
+                        if (this.allowHTMLContent) {
+                            dom.innerHTML = this.markdownRenderer(message);
+                        } else {
+                            dom.textContent = message;
+                        }
                         return dom;
                     },
                     source: formattedSource,
@@ -557,50 +610,52 @@ export class LanguageServerPlugin implements PluginValue {
         );
 
         const resolvedDiagnostics = await Promise.all(diagnostics);
-        this.addDiagnostics(resolvedDiagnostics);
+        // Bail out if this publish is no longer current. Code actions are
+        // awaited above, so by now the plugin may have been torn down, a newer
+        // publish may have superseded this one, or the document may have
+        // changed - in which case the snapshot offsets are stale and would
+        // mark unrelated text.
+        if (this.destroyed) {
+            return;
+        }
+        if (
+            params.version != null &&
+            params.version < this.lastSeenDiagnosticsVersion
+        ) {
+            return;
+        }
+        if (this.view.state.doc !== doc) {
+            return;
+        }
+        this.setOwnDiagnostics(
+            resolvedDiagnostics.filter(
+                (diagnostic): diagnostic is Diagnostic => diagnostic != null,
+            ),
+        );
     }
 
     /**
-     * Adds diagnostics to the current state
+     * Replaces this plugin's diagnostics while preserving diagnostics
+     * added by other sources (e.g. other plugins or linters)
      */
-    private addDiagnostics(newDiagnostics: Diagnostic[]) {
-        if (newDiagnostics.length === 0) {
-            return;
-        }
-
+    private setOwnDiagnostics(newDiagnostics: Diagnostic[]) {
         const state = this.view.state;
 
-        // Get current diagnostics from the state
-        const currentDiagnostics: Diagnostic[] = [];
-        forEachDiagnostic(state, (diagnostic) => {
-            currentDiagnostics.push(diagnostic);
-            return true;
+        const otherDiagnostics: Diagnostic[] = [];
+        forEachDiagnostic(state, (diagnostic, from, to) => {
+            if (diagnostic.markClass !== this.pluginId) {
+                // Use the mapped positions in case the document changed
+                otherDiagnostics.push({ ...diagnostic, from, to });
+            }
         });
 
-        // Sources
-        const uniqueSources = new Set(
-            newDiagnostics
-                .map((diagnostic) => diagnostic.source)
-                .filter(Boolean),
-        );
-
-        // Filter out diagnostics from the same source
-        const diagnosticsFromOtherSources = newDiagnostics.filter(
-            (diagnostic) => {
-                return !uniqueSources.has(diagnostic.source);
-            },
-        );
-
         this.view.dispatch(
-            setDiagnostics(state, [
-                ...diagnosticsFromOtherSources,
-                ...newDiagnostics,
-            ]),
+            setDiagnostics(state, [...otherDiagnostics, ...newDiagnostics]),
         );
     }
 
     private clearDiagnostics() {
-        this.view.dispatch(setDiagnostics(this.view.state, []));
+        this.setOwnDiagnostics([]);
     }
 
     private async requestCodeActions(
@@ -669,9 +724,32 @@ export class LanguageServerPlugin implements PluginValue {
                     });
                 });
 
-            if (!prepareResult || "defaultBehavior" in prepareResult) {
+            if (!prepareResult) {
                 showErrorMessage(view, "Cannot rename this symbol");
                 return;
+            }
+
+            let renameRange:
+                | LSP.Range
+                | { range: LSP.Range; placeholder: string };
+            if ("defaultBehavior" in prepareResult) {
+                // defaultBehavior: true means rename IS possible, using the
+                // client's default (word-at-cursor) range
+                if (!prepareResult.defaultBehavior) {
+                    showErrorMessage(view, "Cannot rename this symbol");
+                    return;
+                }
+                const fallback = this.prepareRenameFallback(view, {
+                    line,
+                    character,
+                });
+                if (!fallback) {
+                    showErrorMessage(view, "Cannot rename this symbol");
+                    return;
+                }
+                renameRange = fallback;
+            } else {
+                renameRange = prepareResult;
             }
 
             // Create popup input
@@ -687,7 +765,7 @@ export class LanguageServerPlugin implements PluginValue {
 
             // Get current word as default value
             const range =
-                "range" in prepareResult ? prepareResult.range : prepareResult;
+                "range" in renameRange ? renameRange.range : renameRange;
             const from = posToOffset(view.state.doc, range.start);
             if (from == null) {
                 return;
@@ -888,6 +966,10 @@ export class LanguageServerPlugin implements PluginValue {
             triggerCharacter,
         );
 
+        if (this.destroyed) {
+            return;
+        }
+
         // Dispatch the tooltip (or null to clear) via StateEffect
         view.dispatch({
             effects: setSignatureHelpTooltip.of(tooltip),
@@ -934,17 +1016,34 @@ export class LanguageServerPlugin implements PluginValue {
         const paramLabel = parameters[activeParameterIndex].label;
 
         if (typeof paramLabel === "string") {
-            // Simple string replacement
-            if (this.allowHTMLContent) {
-                signatureElement.innerHTML = signatureText.replace(
-                    paramLabel,
-                    `<strong class="cm-signature-active-param">${paramLabel}</strong>`,
+            // Find the parameter within the parameter list (after the opening
+            // paren) so a label like "s" does not match inside the function
+            // name, and highlight it without injecting the label as HTML.
+            // When several parameters share the same label text, walk past the
+            // earlier parameters so the active occurrence is the one chosen.
+            let searchFrom = signatureText.indexOf("(") + 1;
+            for (let i = 0; i < activeParameterIndex; i++) {
+                const previousLabel = parameters[i]?.label;
+                if (typeof previousLabel === "string") {
+                    const previousIndex = signatureText.indexOf(
+                        previousLabel,
+                        searchFrom,
+                    );
+                    if (previousIndex !== -1) {
+                        searchFrom = previousIndex + previousLabel.length;
+                    }
+                }
+            }
+            const paramIndex = signatureText.indexOf(paramLabel, searchFrom);
+            if (paramIndex !== -1) {
+                this.applyRangeHighlighting(
+                    signatureElement,
+                    signatureText,
+                    paramIndex,
+                    paramIndex + paramLabel.length,
                 );
             } else {
-                signatureElement.textContent = signatureText.replace(
-                    paramLabel,
-                    `«${paramLabel}»`,
-                );
+                signatureElement.textContent = signatureText;
             }
         } else if (Array.isArray(paramLabel) && paramLabel.length === 2) {
             // Handle array format [startIndex, endIndex]
@@ -1001,16 +1100,10 @@ export class LanguageServerPlugin implements PluginValue {
         docsElement.classList.add("cm-signature-docs");
         docsElement.style.cssText = "margin-top: 4px; color: #666;";
 
-        const formattedContent = formatContents(
-            documentation,
-            this.markdownRenderer,
-        );
-
-        if (this.allowHTMLContent) {
-            docsElement.innerHTML = formattedContent;
-        } else {
-            docsElement.textContent = formattedContent;
-        }
+        renderDocumentation(docsElement, documentation, {
+            allowHTMLContent: this.allowHTMLContent,
+            markdownRenderer: this.markdownRenderer,
+        });
 
         return docsElement;
     }
@@ -1026,16 +1119,10 @@ export class LanguageServerPlugin implements PluginValue {
         paramDocsElement.style.cssText =
             "margin-top: 4px; font-style: italic; border-top: 1px solid #eee; padding-top: 4px;";
 
-        const formattedContent = formatContents(
-            documentation,
-            this.markdownRenderer,
-        );
-
-        if (this.allowHTMLContent) {
-            paramDocsElement.innerHTML = formattedContent;
-        } else {
-            paramDocsElement.textContent = formattedContent;
-        }
+        renderDocumentation(paramDocsElement, documentation, {
+            allowHTMLContent: this.allowHTMLContent,
+            markdownRenderer: this.markdownRenderer,
+        });
 
         return paramDocsElement;
     }
@@ -1047,7 +1134,7 @@ export class LanguageServerPlugin implements PluginValue {
     private prepareRenameFallback(
         view: EditorView,
         { line, character }: { line: number; character: number },
-    ): LSP.PrepareRenameResult | null {
+    ): { range: LSP.Range; placeholder: string } | null {
         const doc = view.state.doc;
         const lineText = doc.line(line + 1).text;
         const wordRegex = /\w+/g;
@@ -1085,6 +1172,30 @@ export class LanguageServerPlugin implements PluginValue {
             },
             placeholder: lineText.slice(start, end),
         };
+    }
+
+    /**
+     * Applies a set of LSP text edits to the view in a single transaction.
+     * Edits with ranges that do not resolve in the current document are
+     * skipped.
+     * @returns True if any change was applied
+     */
+    private applyEdits(view: EditorView, edits: readonly LSP.TextEdit[]) {
+        const doc = view.state.doc;
+        const changes: { from: number; to: number; insert: string }[] = [];
+        for (const edit of edits) {
+            const from = posToOffset(doc, edit.range.start);
+            const to = posToOffset(doc, edit.range.end);
+            if (from == null || to == null || from > to) {
+                continue;
+            }
+            changes.push({ from, to, insert: edit.newText });
+        }
+        if (changes.length === 0) {
+            return false;
+        }
+        view.dispatch(view.state.update({ changes }));
+        return true;
     }
 
     /**
@@ -1128,23 +1239,7 @@ export class LanguageServerPlugin implements PluginValue {
                         continue;
                     }
 
-                    // Sort edits in reverse order to avoid position shifts
-                    const sortedEdits = docChange.edits.sort((a, b) => {
-                        const posA = posToOffset(view.state.doc, a.range.start);
-                        const posB = posToOffset(view.state.doc, b.range.start);
-                        return (posB ?? 0) - (posA ?? 0);
-                    });
-
-                    // Create a single transaction with all changes
-                    const changes = sortedEdits.map((edit) => ({
-                        from:
-                            posToOffset(view.state.doc, edit.range.start) ?? 0,
-                        to: posToOffset(view.state.doc, edit.range.end) ?? 0,
-                        insert: edit.newText,
-                    }));
-
-                    view.dispatch(view.state.update({ changes }));
-                    return true;
+                    return this.applyEdits(view, docChange.edits);
                 }
 
                 // This is a CreateFile, RenameFile, or DeleteFile operation
@@ -1154,38 +1249,19 @@ export class LanguageServerPlugin implements PluginValue {
                 );
                 return false;
             }
+            return false;
         }
+
         // Fall back to changes if documentChanges is not available
-        else if (Object.keys(changesMap).length > 0) {
-            // Apply all changes
-            for (const [uri, changes] of Object.entries(changesMap)) {
-                if (uri !== this.documentUri) {
-                    showErrorMessage(
-                        view,
-                        "Multi-file rename not supported yet",
-                    );
-                    continue;
-                }
-
-                // Sort changes in reverse order to avoid position shifts
-                const sortedChanges = changes.sort((a, b) => {
-                    const posA = posToOffset(view.state.doc, a.range.start);
-                    const posB = posToOffset(view.state.doc, b.range.start);
-                    return (posB ?? 0) - (posA ?? 0);
-                });
-
-                // Create a single transaction with all changes
-                const changeSpecs = sortedChanges.map((change) => ({
-                    from: posToOffset(view.state.doc, change.range.start) ?? 0,
-                    to: posToOffset(view.state.doc, change.range.end) ?? 0,
-                    insert: change.newText,
-                }));
-
-                view.dispatch(view.state.update({ changes: changeSpecs }));
+        let applied = false;
+        for (const [uri, changes] of Object.entries(changesMap)) {
+            if (uri !== this.documentUri) {
+                showErrorMessage(view, "Multi-file rename not supported yet");
+                continue;
             }
+            applied = this.applyEdits(view, changes) || applied;
         }
-
-        return false;
+        return applied;
     }
 }
 
@@ -1201,7 +1277,6 @@ export function languageServer(options: LanguageServerWebsocketOptions) {
 }
 
 export function languageServerWithClient(options: LanguageServerOptions) {
-    let plugin: LanguageServerPlugin | null = null;
     const shortcuts = {
         rename: "F2",
         goToDefinition: "F12",
@@ -1228,10 +1303,11 @@ export function languageServerWithClient(options: LanguageServerOptions) {
         ...options,
     };
 
-    // Create base extensions array
-    const extensions: Extension[] = [
-        ViewPlugin.define((view) => {
-            plugin = new LanguageServerPlugin({
+    // Each editor view gets its own plugin instance; look it up through the
+    // view so that several views sharing these extensions do not interfere
+    const lspViewPlugin = ViewPlugin.define(
+        (view) =>
+            new LanguageServerPlugin({
                 client: lsClient,
                 documentUri:
                     options.documentUri ?? view.state.facet(documentUri),
@@ -1243,10 +1319,12 @@ export function languageServerWithClient(options: LanguageServerOptions) {
                 useSnippetOnCompletion: options.useSnippetOnCompletion,
                 onGoToDefinition: options.onGoToDefinition,
                 markdownRenderer: options.markdownRenderer,
-            });
-            return plugin;
-        }),
-    ];
+            }),
+    );
+    const getPlugin = (view: EditorView) => view.plugin(lspViewPlugin);
+
+    // Create base extensions array
+    const extensions: Extension[] = [lspViewPlugin];
 
     // Add shortcuts
     extensions.push(
@@ -1254,6 +1332,7 @@ export function languageServerWithClient(options: LanguageServerOptions) {
             {
                 key: shortcuts.signatureHelp,
                 run: (view) => {
+                    const plugin = getPlugin(view);
                     if (!(plugin && featuresOptions.signatureHelpEnabled))
                         return false;
 
@@ -1265,6 +1344,7 @@ export function languageServerWithClient(options: LanguageServerOptions) {
             {
                 key: shortcuts.rename,
                 run: (view) => {
+                    const plugin = getPlugin(view);
                     if (!(plugin && featuresOptions.renameEnabled))
                         return false;
 
@@ -1279,6 +1359,7 @@ export function languageServerWithClient(options: LanguageServerOptions) {
             {
                 key: shortcuts.goToDefinition,
                 run: (view) => {
+                    const plugin = getPlugin(view);
                     if (!(plugin && featuresOptions.definitionEnabled))
                         return false;
 
@@ -1304,6 +1385,7 @@ export function languageServerWithClient(options: LanguageServerOptions) {
     if (featuresOptions.hoverEnabled) {
         extensions.push(
             hoverTooltip((view, pos) => {
+                const plugin = getPlugin(view);
                 if (plugin == null) {
                     return null;
                 }
@@ -1367,7 +1449,12 @@ export function languageServerWithClient(options: LanguageServerOptions) {
         // and dismiss the signature help tooltip.
         extensions.push(
             EditorView.updateListener.of((update) => {
-                if (!(plugin && featuresOptions.signatureActivateOnTyping))
+                if (
+                    !(
+                        getPlugin(update.view) &&
+                        featuresOptions.signatureActivateOnTyping
+                    )
+                )
                     return;
 
                 const tooltip = update.state.field(signatureHelpTooltipField);
@@ -1381,13 +1468,18 @@ export function languageServerWithClient(options: LanguageServerOptions) {
 
                 // If not inside any parentheses, dismiss
                 if (!isCursorInsideFunctionCall(update.state.doc, cursorPos)) {
-                    hideSignatureHelpTooltip(update.view);
+                    // Dispatching is not allowed while an update is in
+                    // progress, so defer the dismissal
+                    queueMicrotask(() => {
+                        hideSignatureHelpTooltip(update.view);
+                    });
                 }
             }),
         );
 
         extensions.push(
             EditorView.updateListener.of(async (update) => {
+                const plugin = getPlugin(update.view);
                 if (!(plugin && update.docChanged)) return;
 
                 if (
@@ -1454,6 +1546,9 @@ export function languageServerWithClient(options: LanguageServerOptions) {
                      * @returns A CompletionResult or null if no completions are available
                      */
                     async (context) => {
+                        const plugin = context.view
+                            ? getPlugin(context.view)
+                            : null;
                         // Don't proceed if plugin isn't initialized
                         if (plugin == null) {
                             return null;
@@ -1500,6 +1595,7 @@ export function languageServerWithClient(options: LanguageServerOptions) {
                         x: event.clientX,
                         y: event.clientY,
                     });
+                    const plugin = getPlugin(view);
                     if (pos && plugin) {
                         plugin
                             .requestDefinition(

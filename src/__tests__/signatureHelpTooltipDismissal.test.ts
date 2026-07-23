@@ -32,6 +32,10 @@ vi.mock("../utils.js", () => ({
     }),
     eventsFromChangeSet: vi.fn().mockReturnValue([]),
     renderMarkdown: vi.fn().mockReturnValue(""),
+    renderDocumentation: vi.fn().mockImplementation((element, contents) => {
+        element.textContent =
+            typeof contents === "string" ? contents : (contents?.value ?? "");
+    }),
     showErrorMessage: vi.fn(),
 }));
 

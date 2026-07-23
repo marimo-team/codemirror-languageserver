@@ -1,55 +1,57 @@
+import { EditorState, Prec } from "@codemirror/state";
 import { describe, expect, it } from "vitest";
-import { createUseLastOrThrow, documentUri, languageId } from "../config.js";
+import { createUseFirstOrThrow, documentUri, languageId } from "../config.js";
 
-describe("createUseLastOrThrow", () => {
-    it("should return the last value from an array", () => {
-        const useLastOrThrow = createUseLastOrThrow("Test error");
+describe("createUseFirstOrThrow", () => {
+    it("should return the first (highest-precedence) value from an array", () => {
+        // CodeMirror passes facet inputs ordered highest-precedence first
+        const useFirstOrThrow = createUseFirstOrThrow("Test error");
         const values = ["first", "second", "third"];
 
-        expect(useLastOrThrow(values)).toBe("third");
+        expect(useFirstOrThrow(values)).toBe("first");
     });
 
     it("should return the only value from single-item array", () => {
-        const useLastOrThrow = createUseLastOrThrow("Test error");
+        const useFirstOrThrow = createUseFirstOrThrow("Test error");
         const values = ["single"];
 
-        expect(useLastOrThrow(values)).toBe("single");
+        expect(useFirstOrThrow(values)).toBe("single");
     });
 
     it("should throw custom error for empty array when accessed", () => {
         const customMessage = "Custom error message";
-        const useLastOrThrow = createUseLastOrThrow(customMessage);
+        const useFirstOrThrow = createUseFirstOrThrow(customMessage);
 
-        const result = useLastOrThrow([]);
+        const result = useFirstOrThrow([]);
         // The result is a proxy, accessing any property should throw
         expect(() => result.anyProperty).toThrow(customMessage);
     });
 
     it("should handle undefined values correctly", () => {
-        const useLastOrThrow = createUseLastOrThrow("Test error");
+        const useFirstOrThrow = createUseFirstOrThrow("Test error");
         const values = [undefined, "value", undefined];
 
-        const result = useLastOrThrow(values);
+        const result = useFirstOrThrow(values);
         // undefined triggers the fallback proxy
         expect(() => result.anyProperty).toThrow("Test error");
     });
 
     it("should handle null values correctly", () => {
-        const useLastOrThrow = createUseLastOrThrow("Test error");
+        const useFirstOrThrow = createUseFirstOrThrow("Test error");
         const values = [null, "value", null];
 
-        const result = useLastOrThrow(values);
+        const result = useFirstOrThrow(values);
         // null triggers the fallback proxy
         expect(() => result.anyProperty).toThrow("Test error");
     });
 
     it("should work with different types", () => {
-        const useLastOrThrow = createUseLastOrThrow("Test error");
+        const useFirstOrThrow = createUseFirstOrThrow("Test error");
         const numberValues = [1, 2, 3];
         const objectValues = [{ a: 1 }, { b: 2 }];
 
-        expect(useLastOrThrow(numberValues)).toBe(3);
-        expect(useLastOrThrow(objectValues)).toEqual({ b: 2 });
+        expect(useFirstOrThrow(numberValues)).toBe(1);
+        expect(useFirstOrThrow(objectValues)).toEqual({ a: 1 });
     });
 });
 
@@ -67,13 +69,25 @@ describe("documentUri facet", () => {
         );
     });
 
-    it("should return last value when multiple values provided", () => {
-        const values = [
-            "file:///first.ts",
-            "file:///second.ts",
-            "file:///third.ts",
-        ];
-        expect(documentUri.combine(values)).toBe("file:///third.ts");
+    it("should let a high-precedence value override a default one", () => {
+        const state = EditorState.create({
+            extensions: [
+                documentUri.of("file:///default.ts"),
+                Prec.high(documentUri.of("file:///override.ts")),
+            ],
+        });
+        expect(state.facet(documentUri)).toBe("file:///override.ts");
+    });
+
+    it("should use the first value with equal precedence", () => {
+        // Matches the behavior of built-in facets like EditorState.tabSize
+        const state = EditorState.create({
+            extensions: [
+                documentUri.of("file:///first.ts"),
+                documentUri.of("file:///second.ts"),
+            ],
+        });
+        expect(state.facet(documentUri)).toBe("file:///first.ts");
     });
 });
 
@@ -91,8 +105,13 @@ describe("languageId facet", () => {
         );
     });
 
-    it("should return last value when multiple values provided", () => {
-        const values = ["javascript", "typescript", "python"];
-        expect(languageId.combine(values)).toBe("python");
+    it("should let a high-precedence value override a default one", () => {
+        const state = EditorState.create({
+            extensions: [
+                languageId.of("javascript"),
+                Prec.high(languageId.of("typescript")),
+            ],
+        });
+        expect(state.facet(languageId)).toBe("typescript");
     });
 });
