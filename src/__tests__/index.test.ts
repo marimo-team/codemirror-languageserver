@@ -31,6 +31,8 @@ const createMockClient = (
     const mockClient = {
         ready: true,
         capabilities: { definitionProvider: true },
+        dynamicCapabilities: new Map(),
+        hasCapability: LanguageServerClient.prototype.hasCapability,
         clientCapabilities: {},
         initializePromise: Promise.resolve(),
         initialize: vi.fn().mockResolvedValue(undefined),

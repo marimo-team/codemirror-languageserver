@@ -7,7 +7,10 @@ export {
     setSignatureHelpTooltip,
     suppressSignatureHelp,
 } from "./plugin.js";
-export { LanguageServerClient } from "./lsp.js";
+export {
+    LanguageServerClient,
+    type ServerRequestHandler,
+} from "./lsp.js";
 export {
     languageId,
     documentUri,

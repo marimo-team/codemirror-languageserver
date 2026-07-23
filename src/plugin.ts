@@ -459,7 +459,12 @@ export class LanguageServerPlugin implements PluginValue {
             return null;
         }
 
-        if (!(this.client.ready && this.client.capabilities?.hoverProvider)) {
+        if (
+            !(
+                this.client.ready &&
+                this.client.hasCapability("textDocument/hover")
+            )
+        ) {
             return null;
         }
 
@@ -517,7 +522,10 @@ export class LanguageServerPlugin implements PluginValue {
         await Promise.all(this.pendingDocumentChanges);
 
         if (
-            !(this.client.ready && this.client.capabilities?.completionProvider)
+            !(
+                this.client.ready &&
+                this.client.hasCapability("textDocument/completion")
+            )
         ) {
             return null;
         }
@@ -590,7 +598,10 @@ export class LanguageServerPlugin implements PluginValue {
         }
 
         if (
-            !(this.client.ready && this.client.capabilities?.definitionProvider)
+            !(
+                this.client.ready &&
+                this.client.hasCapability("textDocument/definition")
+            )
         ) {
             return;
         }
@@ -823,7 +834,10 @@ export class LanguageServerPlugin implements PluginValue {
         }
 
         if (
-            !(this.client.ready && this.client.capabilities?.codeActionProvider)
+            !(
+                this.client.ready &&
+                this.client.hasCapability("textDocument/codeAction")
+            )
         ) {
             return null;
         }
@@ -858,7 +872,7 @@ export class LanguageServerPlugin implements PluginValue {
             return;
         }
 
-        if (!this.client.capabilities?.renameProvider) {
+        if (!this.client.hasCapability("textDocument/rename")) {
             showErrorMessage(view, "Rename not supported by language server");
             return;
         }
@@ -1024,7 +1038,7 @@ export class LanguageServerPlugin implements PluginValue {
             !(
                 this.featureOptions.signatureHelpEnabled &&
                 this.client.ready &&
-                this.client.capabilities?.signatureHelpProvider
+                this.client.hasCapability("textDocument/signatureHelp")
             )
         ) {
             return null;
@@ -1645,13 +1659,14 @@ export function languageServerWithClient(options: LanguageServerOptions) {
                     return;
 
                 // Early exit if signature help capability is not supported
-                if (!plugin.client.capabilities?.signatureHelpProvider) return;
+                if (!plugin.client.hasCapability("textDocument/signatureHelp"))
+                    return;
 
                 // Only proceed if signatureActivateOnTyping is enabled
                 if (!featuresOptions.signatureActivateOnTyping) return;
 
                 const triggerChars = plugin.client.capabilities
-                    .signatureHelpProvider.triggerCharacters || ["(", ","];
+                    ?.signatureHelpProvider?.triggerCharacters || ["(", ","];
 
                 // Check if changes include trigger characters
                 const changes = update.changes;

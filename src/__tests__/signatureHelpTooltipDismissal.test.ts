@@ -1,7 +1,7 @@
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { LanguageServerClient } from "../lsp.js";
+import { LanguageServerClient } from "../lsp.js";
 import type { FeatureOptions } from "../lsp.js";
 import {
     LanguageServerPlugin,
@@ -69,6 +69,8 @@ const createMockClient = (): LanguageServerClient => {
                 triggerCharacters: ["(", ","],
             },
         },
+        dynamicCapabilities: new Map(),
+        hasCapability: LanguageServerClient.prototype.hasCapability,
         clientCapabilities: {},
         initializePromise: Promise.resolve(),
         initialize: vi.fn().mockResolvedValue(undefined),

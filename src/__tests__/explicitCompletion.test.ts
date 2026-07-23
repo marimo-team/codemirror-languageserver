@@ -7,7 +7,7 @@ import { EditorState, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { describe, expect, it, vi } from "vitest";
 import { CompletionTriggerKind } from "vscode-languageserver-protocol";
-import type { LanguageServerClient } from "../lsp.js";
+import { LanguageServerClient } from "../lsp.js";
 import { languageServerWithClient } from "../plugin.js";
 
 describe("completion request ordering", () => {
@@ -25,6 +25,8 @@ describe("completion request ordering", () => {
         const client = {
             ready: true,
             capabilities: { completionProvider: {} },
+            dynamicCapabilities: new Map(),
+            hasCapability: LanguageServerClient.prototype.hasCapability,
             initializePromise: Promise.resolve(),
             onNotification: vi.fn().mockReturnValue(() => {}),
             textDocumentDidOpen: vi.fn().mockResolvedValue(undefined),
