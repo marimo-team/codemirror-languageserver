@@ -4,7 +4,7 @@ import { EditorView } from "@codemirror/view";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type * as LSP from "vscode-languageserver-protocol";
 import type { FeatureOptions, LanguageServerClient } from "../lsp.js";
-import { LanguageServerPlugin } from "../plugin.js";
+import { LanguageServerPlugin, getLanguageServerPlugin } from "../plugin.js";
 
 const featureOptions: Required<FeatureOptions> = {
     diagnosticsEnabled: true,
@@ -198,6 +198,28 @@ describe("destroy lifecycle", () => {
         await pending;
 
         expect(dispatchSpy).not.toHaveBeenCalled();
+    });
+});
+
+describe("getLanguageServerPlugin", () => {
+    it("exposes the plugin attached to a view", () => {
+        const view = createView("hello");
+        const plugin = createPlugin(view);
+        expect(getLanguageServerPlugin(view)).toBe(plugin);
+    });
+
+    it("keeps exposing an earlier plugin after a later one is destroyed", () => {
+        const view = createView("hello");
+        const first = createPlugin(view);
+        const second = createPlugin(view);
+        expect(getLanguageServerPlugin(view)).toBe(second);
+
+        second.destroy();
+        // The still-active earlier plugin must remain reachable.
+        expect(getLanguageServerPlugin(view)).toBe(first);
+
+        first.destroy();
+        expect(getLanguageServerPlugin(view)).toBeUndefined();
     });
 });
 

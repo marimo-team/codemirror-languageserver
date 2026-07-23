@@ -99,21 +99,47 @@ export const suppressSignatureHelp = Annotation.define<boolean>();
 const SIGNATURE_TOOLTIP_MAX_LINES_BACK = 20;
 
 /**
- * Maps each editor view to its active language server plugin so hosts can
- * reach plugin methods (e.g. `documentDidSave`) without the private
- * `ViewPlugin` token. If several language servers attach to one view, the
- * most recently constructed plugin wins.
+ * Maps each editor view to the language server plugins attached to it so
+ * hosts can reach plugin methods (e.g. `documentDidSave`) without the private
+ * `ViewPlugin` token. Several language servers may attach to one view; the
+ * list keeps every live plugin so destroying one still exposes the others.
  */
-const pluginRegistry = new WeakMap<EditorView, LanguageServerPlugin>();
+const pluginRegistry = new WeakMap<EditorView, LanguageServerPlugin[]>();
+
+function registerPlugin(view: EditorView, plugin: LanguageServerPlugin) {
+    const plugins = pluginRegistry.get(view);
+    if (plugins) {
+        plugins.push(plugin);
+    } else {
+        pluginRegistry.set(view, [plugin]);
+    }
+}
+
+function unregisterPlugin(view: EditorView, plugin: LanguageServerPlugin) {
+    const plugins = pluginRegistry.get(view);
+    if (!plugins) {
+        return;
+    }
+    const index = plugins.indexOf(plugin);
+    if (index !== -1) {
+        plugins.splice(index, 1);
+    }
+    if (plugins.length === 0) {
+        pluginRegistry.delete(view);
+    }
+}
 
 /**
  * Returns the language server plugin attached to a view, if any. Useful for
  * invoking host-driven actions such as {@link LanguageServerPlugin.documentDidSave}.
+ * When multiple servers share a view, the most recently attached live plugin
+ * is returned.
  */
 export function getLanguageServerPlugin(
     view: EditorView,
 ): LanguageServerPlugin | undefined {
-    return pluginRegistry.get(view);
+    const plugins = pluginRegistry.get(view);
+    return plugins?.[plugins.length - 1];
 }
 
 export class LanguageServerPlugin implements PluginValue {
@@ -200,7 +226,7 @@ export class LanguageServerPlugin implements PluginValue {
         this.featureOptions = featureOptions;
         this.onGoToDefinition = onGoToDefinition;
         this.markdownRenderer = markdownRenderer;
-        pluginRegistry.set(view, this);
+        registerPlugin(view, this);
         this.disposeListener = client.onNotification(
             this.processNotification.bind(this),
         );
@@ -246,9 +272,7 @@ export class LanguageServerPlugin implements PluginValue {
         this.destroyed = true;
         this.disposeListener?.();
         this.disposeListener = undefined;
-        if (pluginRegistry.get(this.view) === this) {
-            pluginRegistry.delete(this.view);
-        }
+        unregisterPlugin(this.view, this);
         this.closeDocument();
     }
 
