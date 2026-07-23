@@ -36,6 +36,10 @@ export interface LSPRequestMap {
         LSP.SignatureHelpParams,
         LSP.SignatureHelp | null,
     ];
+    "textDocument/willSaveWaitUntil": [
+        LSP.WillSaveTextDocumentParams,
+        LSP.TextEdit[] | null,
+    ];
 }
 
 // Client to server
@@ -44,6 +48,8 @@ export interface LSPNotifyMap {
     "textDocument/didChange": LSP.DidChangeTextDocumentParams;
     "textDocument/didOpen": LSP.DidOpenTextDocumentParams;
     "textDocument/didClose": LSP.DidCloseTextDocumentParams;
+    "textDocument/willSave": LSP.WillSaveTextDocumentParams;
+    "textDocument/didSave": LSP.DidSaveTextDocumentParams;
 }
 
 // Server to client
@@ -212,6 +218,13 @@ export class LanguageServerClient {
     public clientCapabilities: LanguageServerClientOptions["capabilities"];
 
     private notificationListeners: Set<(n: Notification) => void> = new Set();
+    /**
+     * How many open editors (plugins) hold each document URI. Several views
+     * may share one client and one URI (e.g. split views); the server should
+     * see a single didOpen/didClose pair, so we only notify on the 0->1 and
+     * 1->0 transitions.
+     */
+    private documentOpenCounts = new Map<string, number>();
     private webSocketConnection?: WebSocketTransport["connection"];
     private webSocketMessageHandler?: (message: { data: unknown }) => void;
     private isClosed = false;
@@ -309,9 +322,9 @@ export class LanguageServerClient {
                 moniker: {},
                 synchronization: {
                     dynamicRegistration: true,
-                    willSave: false,
-                    didSave: false,
-                    willSaveWaitUntil: false,
+                    willSave: true,
+                    didSave: true,
+                    willSaveWaitUntil: true,
                 },
                 codeAction: {
                     dynamicRegistration: true,
@@ -426,6 +439,14 @@ export class LanguageServerClient {
     }
 
     public textDocumentDidOpen(params: LSP.DidOpenTextDocumentParams) {
+        const uri = params.textDocument.uri;
+        const previous = this.documentOpenCounts.get(uri) ?? 0;
+        this.documentOpenCounts.set(uri, previous + 1);
+        // Additional views onto an already-open document share the server's
+        // single open; only the first view sends didOpen.
+        if (previous > 0) {
+            return Promise.resolve(undefined);
+        }
         return this.notify("textDocument/didOpen", params);
     }
 
@@ -434,7 +455,35 @@ export class LanguageServerClient {
     }
 
     public textDocumentDidClose(params: LSP.DidCloseTextDocumentParams) {
+        const uri = params.textDocument.uri;
+        const previous = this.documentOpenCounts.get(uri) ?? 0;
+        // Only the last view closing the document notifies the server; earlier
+        // closes just drop a reference. A close with no tracked open (previous
+        // <= 1) still notifies, so direct callers are not silently swallowed.
+        if (previous > 1) {
+            this.documentOpenCounts.set(uri, previous - 1);
+            return Promise.resolve(undefined);
+        }
+        this.documentOpenCounts.delete(uri);
         return this.notify("textDocument/didClose", params);
+    }
+
+    public textDocumentWillSave(params: LSP.WillSaveTextDocumentParams) {
+        return this.notify("textDocument/willSave", params);
+    }
+
+    public async textDocumentWillSaveWaitUntil(
+        params: LSP.WillSaveTextDocumentParams,
+    ) {
+        return await this.request(
+            "textDocument/willSaveWaitUntil",
+            params,
+            this.timeout,
+        );
+    }
+
+    public textDocumentDidSave(params: LSP.DidSaveTextDocumentParams) {
+        return this.notify("textDocument/didSave", params);
     }
 
     public async textDocumentHover(params: LSP.HoverParams) {

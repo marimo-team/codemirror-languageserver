@@ -17,6 +17,7 @@ import { WebSocketTransport } from "@open-rpc/client-js";
 import {
     CompletionTriggerKind,
     DiagnosticSeverity,
+    TextDocumentSaveReason,
     TextDocumentSyncKind,
 } from "vscode-languageserver-protocol";
 
@@ -296,6 +297,69 @@ export class LanguageServerPlugin implements PluginValue {
             });
         } catch (e) {
             console.error(e);
+        }
+    }
+
+    /**
+     * Notifies the language server that the document was (or is about to be)
+     * saved. The library has no concept of "save" on its own, so hosts wire
+     * this to their own save action.
+     *
+     * Follows the LSP save handshake, honoring the server's advertised
+     * capabilities: willSave -> willSaveWaitUntil (applying returned edits) ->
+     * didSave (including the document text when the server requested it).
+     */
+    public async documentDidSave(
+        reason: LSP.TextDocumentSaveReason = TextDocumentSaveReason.Manual,
+    ) {
+        if (!this.client.ready) {
+            return;
+        }
+
+        const sync = this.client.capabilities?.textDocumentSync;
+        // Save-related sub-capabilities only exist on the object form; a plain
+        // sync-kind number carries no save information.
+        const syncOptions =
+            typeof sync === "object" && sync != null ? sync : undefined;
+
+        if (syncOptions?.willSave) {
+            try {
+                await this.client.textDocumentWillSave({
+                    textDocument: { uri: this.documentUri },
+                    reason,
+                });
+            } catch (error) {
+                console.error("Failed to send willSave", error);
+            }
+        }
+
+        if (syncOptions?.willSaveWaitUntil) {
+            try {
+                const edits = await this.client.textDocumentWillSaveWaitUntil({
+                    textDocument: { uri: this.documentUri },
+                    reason,
+                });
+                if (edits && edits.length > 0 && !this.destroyed) {
+                    this.applyEdits(this.view, edits);
+                }
+            } catch (error) {
+                console.error("Failed during willSaveWaitUntil", error);
+            }
+        }
+
+        // Only send didSave if the server registered for it.
+        const save = syncOptions?.save;
+        if (save == null || save === false) {
+            return;
+        }
+        const includeText = typeof save === "object" && save.includeText;
+        try {
+            await this.client.textDocumentDidSave({
+                textDocument: { uri: this.documentUri },
+                text: includeText ? this.view.state.doc.toString() : undefined,
+            });
+        } catch (error) {
+            console.error("Failed to send didSave", error);
         }
     }
 
