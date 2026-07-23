@@ -1,7 +1,17 @@
+import { Text } from "@codemirror/state";
 import { describe, expect, it, vi } from "vitest";
 import type * as LSP from "vscode-languageserver-protocol";
 import { CompletionItemKind } from "vscode-languageserver-protocol";
-import { convertCompletionItem, convertSnippet } from "../completion.js";
+import {
+    completionOptionClass,
+    convertAdditionalTextEdits,
+    convertCompletionItem,
+    convertSnippet,
+    isDeprecatedItem,
+    mapThroughReplacement,
+    resolveItemDefaults,
+    resolveMainEdit,
+} from "../completion.js";
 import { sortCompletionItems } from "../completion.js";
 
 describe("convertCompletionItem", () => {
@@ -528,5 +538,294 @@ describe("convertSnippet", () => {
         const input = String.raw`\${1:price}`;
         const result = convertSnippet(input);
         expect(result).toBe(String.raw`$\{1:price}`);
+    });
+});
+
+describe("resolveItemDefaults", () => {
+    const range: LSP.Range = {
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: 3 },
+    };
+
+    it("returns the item unchanged when there are no defaults", () => {
+        const item: LSP.CompletionItem = { label: "test" };
+        expect(resolveItemDefaults(item, undefined)).toBe(item);
+    });
+
+    it("fills commitCharacters, insertTextFormat, insertTextMode and data from defaults", () => {
+        const resolved = resolveItemDefaults(
+            { label: "test" },
+            {
+                commitCharacters: ["."],
+                insertTextFormat: 2,
+                insertTextMode: 1,
+                data: { id: 1 },
+            },
+        );
+        expect(resolved).toEqual({
+            label: "test",
+            commitCharacters: ["."],
+            insertTextFormat: 2,
+            insertTextMode: 1,
+            data: { id: 1 },
+        });
+    });
+
+    it("prefers fields set on the item over defaults", () => {
+        const resolved = resolveItemDefaults(
+            {
+                label: "test",
+                commitCharacters: ["("],
+                insertTextFormat: 1,
+                data: { id: 2 },
+                textEdit: { range, newText: "own" },
+            },
+            {
+                commitCharacters: ["."],
+                insertTextFormat: 2,
+                data: { id: 1 },
+                editRange: range,
+            },
+        );
+        expect(resolved.commitCharacters).toEqual(["("]);
+        expect(resolved.insertTextFormat).toBe(1);
+        expect(resolved.data).toEqual({ id: 2 });
+        expect(resolved.textEdit).toEqual({ range, newText: "own" });
+    });
+
+    it("converts a plain default editRange into a textEdit", () => {
+        const resolved = resolveItemDefaults(
+            { label: "test" },
+            { editRange: range },
+        );
+        expect(resolved.textEdit).toEqual({ range, newText: "test" });
+    });
+
+    it("uses textEditText over label for a default editRange", () => {
+        const resolved = resolveItemDefaults(
+            { label: "test", textEditText: "test()" },
+            { editRange: range },
+        );
+        expect(resolved.textEdit).toEqual({ range, newText: "test()" });
+    });
+
+    it("converts an insert/replace default editRange into an InsertReplaceEdit", () => {
+        const insert: LSP.Range = {
+            start: { line: 0, character: 0 },
+            end: { line: 0, character: 2 },
+        };
+        const resolved = resolveItemDefaults(
+            { label: "test" },
+            { editRange: { insert, replace: range } },
+        );
+        expect(resolved.textEdit).toEqual({
+            insert,
+            replace: range,
+            newText: "test",
+        });
+    });
+});
+
+describe("completion item metadata", () => {
+    const defaultOptions = {
+        allowHTMLContent: false,
+        useSnippetOnCompletion: false,
+        hasResolveProvider: false,
+        resolveItem: vi.fn(),
+    };
+
+    it("passes commitCharacters through to the CodeMirror completion", () => {
+        const completion = convertCompletionItem(
+            { label: "test", commitCharacters: [".", "("] },
+            defaultOptions,
+        );
+        expect(completion.commitCharacters).toEqual([".", "("]);
+    });
+
+    it("marks items deprecated via tags", () => {
+        const completion = convertCompletionItem(
+            { label: "test", tags: [1] },
+            defaultOptions,
+        );
+        expect(completion.deprecated).toBe(true);
+    });
+
+    it("marks items deprecated via the legacy deprecated flag", () => {
+        const completion = convertCompletionItem(
+            { label: "test", deprecated: true },
+            defaultOptions,
+        );
+        expect(completion.deprecated).toBe(true);
+    });
+
+    it("leaves non-deprecated items unmarked", () => {
+        const completion = convertCompletionItem(
+            { label: "test" },
+            defaultOptions,
+        );
+        expect(completion.deprecated).toBeUndefined();
+    });
+});
+
+describe("sortCompletionItems client-side filtering mode", () => {
+    it("keeps non-matching items when filtering is disabled", () => {
+        const items: LSP.CompletionItem[] = [
+            { label: "foo" },
+            { label: "bar" },
+        ];
+        const sorted = sortCompletionItems(items, "fo", "javascript", false);
+        expect(sorted.map((i) => i.label)).toEqual(["foo", "bar"]);
+    });
+
+    it("still filters by default", () => {
+        const items: LSP.CompletionItem[] = [
+            { label: "foo" },
+            { label: "bar" },
+        ];
+        const sorted = sortCompletionItems(items, "fo", "javascript");
+        expect(sorted.map((i) => i.label)).toEqual(["foo"]);
+    });
+});
+
+describe("resolveMainEdit", () => {
+    const doc = Text.of(["hello world"]);
+
+    it("falls back to the token range and insertText without a textEdit", () => {
+        expect(
+            resolveMainEdit(
+                doc,
+                { label: "hello", insertText: "hello()" },
+                0,
+                3,
+            ),
+        ).toEqual({ from: 0, to: 3, newText: "hello()" });
+    });
+
+    it("uses a TextEdit's range and text", () => {
+        expect(
+            resolveMainEdit(
+                doc,
+                {
+                    label: "hello",
+                    textEdit: {
+                        range: {
+                            start: { line: 0, character: 0 },
+                            end: { line: 0, character: 5 },
+                        },
+                        newText: "goodbye",
+                    },
+                },
+                0,
+                3,
+            ),
+        ).toEqual({ from: 0, to: 5, newText: "goodbye" });
+    });
+
+    it("uses the replace range of an InsertReplaceEdit", () => {
+        expect(
+            resolveMainEdit(
+                doc,
+                {
+                    label: "hello",
+                    textEdit: {
+                        newText: "goodbye",
+                        insert: {
+                            start: { line: 0, character: 0 },
+                            end: { line: 0, character: 3 },
+                        },
+                        replace: {
+                            start: { line: 0, character: 0 },
+                            end: { line: 0, character: 5 },
+                        },
+                    },
+                },
+                0,
+                3,
+            ),
+        ).toEqual({ from: 0, to: 5, newText: "goodbye" });
+    });
+
+    it("keeps the edit text but falls back to the token range when the edit range is stale", () => {
+        expect(
+            resolveMainEdit(
+                doc,
+                {
+                    label: "hello",
+                    textEdit: {
+                        range: {
+                            start: { line: 0, character: 0 },
+                            end: { line: 9, character: 9 },
+                        },
+                        newText: "goodbye",
+                    },
+                },
+                0,
+                3,
+            ),
+        ).toEqual({ from: 0, to: 3, newText: "goodbye" });
+    });
+});
+
+describe("convertAdditionalTextEdits", () => {
+    const doc = Text.of(["hello world"]);
+    const edit = (
+        startChar: number,
+        endChar: number,
+        newText: string,
+        line = 0,
+    ): LSP.TextEdit => ({
+        range: {
+            start: { line, character: startChar },
+            end: { line, character: endChar },
+        },
+        newText,
+    });
+
+    it("converts edits to offset changes", () => {
+        expect(
+            convertAdditionalTextEdits(doc, [edit(6, 11, "there")], 0, 5),
+        ).toEqual([{ from: 6, to: 11, insert: "there" }]);
+    });
+
+    it("drops edits overlapping the main edit", () => {
+        expect(
+            convertAdditionalTextEdits(doc, [edit(4, 7, "x")], 0, 5),
+        ).toEqual([]);
+    });
+
+    it("drops edits with stale ranges", () => {
+        expect(
+            convertAdditionalTextEdits(doc, [edit(0, 4, "x", 9)], 6, 11),
+        ).toEqual([]);
+    });
+});
+
+describe("mapThroughReplacement", () => {
+    // Replacement of [2, 5) by 7 characters
+    const mapPos = mapThroughReplacement(2, 5, 7);
+
+    it("keeps positions before the replacement", () => {
+        expect(mapPos(0)).toBe(0);
+        expect(mapPos(2)).toBe(2);
+    });
+
+    it("shifts positions after the replacement by the length delta", () => {
+        expect(mapPos(5)).toBe(9);
+        expect(mapPos(10)).toBe(14);
+    });
+});
+
+describe("isDeprecatedItem / completionOptionClass", () => {
+    it("detects deprecation via tags and legacy flag", () => {
+        expect(isDeprecatedItem({ tags: [1] })).toBe(true);
+        expect(isDeprecatedItem({ deprecated: true })).toBe(true);
+        expect(isDeprecatedItem({})).toBe(false);
+    });
+
+    it("returns cm-deprecated only for deprecated completions", () => {
+        expect(completionOptionClass({ label: "a", deprecated: true })).toBe(
+            "cm-deprecated",
+        );
+        expect(completionOptionClass({ label: "a" })).toBe("");
     });
 });

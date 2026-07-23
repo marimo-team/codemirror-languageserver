@@ -26,6 +26,9 @@ vi.mock("../utils.js", () => ({
         return 0;
     }),
     prefixMatch: vi.fn().mockReturnValue(undefined),
+    isCompletionList: vi
+        .fn()
+        .mockImplementation((result) => !Array.isArray(result)),
     formatContents: vi.fn().mockImplementation((contents) => {
         if (typeof contents === "string") return contents;
         if (typeof contents === "object" && contents.value)
@@ -504,6 +507,94 @@ describe("LanguageServerPlugin", () => {
             );
 
             expect(result).toBeNull();
+        });
+
+        const fakeContext = {
+            pos: 0,
+            matchBefore: () => null,
+        } as never;
+        const trigger = {
+            triggerKind: CompletionTriggerKind.Invoked,
+            triggerCharacter: undefined,
+        };
+        // The mocked initialize() resolves with no capabilities and would
+        // overwrite the ones assigned in beforeEach; wait it out and restore
+        const prepareClient = async () => {
+            await mockClient.initializePromise;
+            mockClient.ready = true;
+            mockClient.capabilities = {
+                completionProvider: { resolveProvider: true },
+            };
+        };
+
+        it("disables CodeMirror filtering by default", async () => {
+            await prepareClient();
+            mockClient.textDocumentCompletion = vi.fn().mockResolvedValue({
+                isIncomplete: false,
+                items: [{ label: "foo" }],
+            });
+
+            const result = await plugin.requestCompletion(
+                fakeContext,
+                { line: 0, character: 0 },
+                trigger,
+            );
+
+            expect(result?.filter).toBe(false);
+            expect(result?.validFor).toBeUndefined();
+        });
+
+        it("returns validFor for complete lists when clientSideFiltering is enabled", async () => {
+            await prepareClient();
+            plugin.clientSideFiltering = true;
+            mockClient.textDocumentCompletion = vi.fn().mockResolvedValue({
+                isIncomplete: false,
+                items: [{ label: "foo" }],
+            });
+
+            const result = await plugin.requestCompletion(
+                fakeContext,
+                { line: 0, character: 0 },
+                trigger,
+            );
+
+            expect(result?.filter).toBeUndefined();
+            expect(result?.validFor).toBeInstanceOf(RegExp);
+        });
+
+        it("keeps re-querying incomplete lists even with clientSideFiltering", async () => {
+            await prepareClient();
+            plugin.clientSideFiltering = true;
+            mockClient.textDocumentCompletion = vi.fn().mockResolvedValue({
+                isIncomplete: true,
+                items: [{ label: "foo" }],
+            });
+
+            const result = await plugin.requestCompletion(
+                fakeContext,
+                { line: 0, character: 0 },
+                trigger,
+            );
+
+            expect(result?.filter).toBe(false);
+            expect(result?.validFor).toBeUndefined();
+        });
+
+        it("materializes itemDefaults onto completion items", async () => {
+            await prepareClient();
+            mockClient.textDocumentCompletion = vi.fn().mockResolvedValue({
+                isIncomplete: false,
+                itemDefaults: { commitCharacters: ["."] },
+                items: [{ label: "foo" }],
+            });
+
+            const result = await plugin.requestCompletion(
+                fakeContext,
+                { line: 0, character: 0 },
+                trigger,
+            );
+
+            expect(result?.options[0]?.commitCharacters).toEqual(["."]);
         });
     });
 

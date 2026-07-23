@@ -215,6 +215,21 @@ export function isLSPTextEdit(
     return (textEdit as LSP.TextEdit)?.range !== undefined;
 }
 
+export function isCompletionList(
+    result: LSP.CompletionItem[] | LSP.CompletionList,
+): result is LSP.CompletionList {
+    return !Array.isArray(result);
+}
+
+export function isInsertReplaceEdit(
+    textEdit?: LSP.TextEdit | LSP.InsertReplaceEdit,
+): textEdit is LSP.InsertReplaceEdit {
+    return (
+        (textEdit as LSP.InsertReplaceEdit)?.insert !== undefined &&
+        (textEdit as LSP.InsertReplaceEdit)?.replace !== undefined
+    );
+}
+
 export function isLSPMarkupContent(
     contents: LSP.MarkupContent | LSP.MarkedString | LSP.MarkedString[],
 ): contents is LSP.MarkupContent {

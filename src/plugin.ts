@@ -34,7 +34,12 @@ import {
 import type { PluginValue, ViewUpdate } from "@codemirror/view";
 import type * as LSP from "vscode-languageserver-protocol";
 import type { PublishDiagnosticsParams } from "vscode-languageserver-protocol";
-import { convertCompletionItem, sortCompletionItems } from "./completion.js";
+import {
+    completionOptionClass,
+    convertCompletionItem,
+    resolveItemDefaults,
+    sortCompletionItems,
+} from "./completion.js";
 import { documentUri, languageId } from "./config.js";
 import {
     type DefinitionResult,
@@ -46,6 +51,7 @@ import {
 } from "./lsp.js";
 import {
     eventsFromChangeSet,
+    isCompletionList,
     isEmptyDocumentation,
     offsetToPos,
     posToOffset,
@@ -171,6 +177,11 @@ export class LanguageServerPlugin implements PluginValue {
      */
     public useSnippetOnCompletion: boolean;
     /**
+     * Whether complete (`isIncomplete: false`) completion lists are filtered
+     * client-side by CodeMirror instead of re-querying the server.
+     */
+    public clientSideFiltering: boolean;
+    /**
      * Whether to send incremental changes to the language server.
      */
     public sendIncrementalChanges: boolean;
@@ -199,6 +210,7 @@ export class LanguageServerPlugin implements PluginValue {
         sendIncrementalChanges?: boolean;
         allowHTMLContent?: boolean;
         useSnippetOnCompletion?: boolean;
+        clientSideFiltering?: boolean;
         onGoToDefinition?: (result: DefinitionResult) => void;
         markdownRenderer?: (markdown: string) => string;
     }) {
@@ -211,6 +223,7 @@ export class LanguageServerPlugin implements PluginValue {
             sendIncrementalChanges = true,
             allowHTMLContent = false,
             useSnippetOnCompletion = false,
+            clientSideFiltering = false,
             onGoToDefinition,
             markdownRenderer = renderMarkdown,
         } = opts;
@@ -222,6 +235,7 @@ export class LanguageServerPlugin implements PluginValue {
         this.view = view;
         this.allowHTMLContent = allowHTMLContent;
         this.useSnippetOnCompletion = useSnippetOnCompletion;
+        this.clientSideFiltering = clientSideFiltering;
         this.sendIncrementalChanges = sendIncrementalChanges;
         this.featureOptions = featureOptions;
         this.onGoToDefinition = onGoToDefinition;
@@ -543,7 +557,17 @@ export class LanguageServerPlugin implements PluginValue {
             return null;
         }
 
-        const items = "items" in result ? result.items : result;
+        const completionList: LSP.CompletionList = isCompletionList(result)
+            ? result
+            : { isIncomplete: false, items: result };
+
+        const items = completionList.items.map((item) =>
+            resolveItemDefaults(item, completionList.itemDefaults),
+        );
+
+        // Incomplete lists must always be re-queried on further input
+        const useClientSideFiltering =
+            this.clientSideFiltering && !completionList.isIncomplete;
 
         // Match is undefined if there are no common prefixes
         const match = prefixMatch(items);
@@ -560,6 +584,7 @@ export class LanguageServerPlugin implements PluginValue {
             items,
             token?.text,
             this.languageId,
+            !useClientSideFiltering,
         );
 
         // If we found a token that matches our completion pattern
@@ -580,6 +605,14 @@ export class LanguageServerPlugin implements PluginValue {
                 ),
             });
         });
+
+        if (useClientSideFiltering) {
+            return {
+                from: pos,
+                options,
+                validFor: /^\w*$/,
+            };
+        }
 
         return {
             from: pos,
@@ -1486,6 +1519,7 @@ export function languageServerWithClient(options: LanguageServerOptions) {
                 sendIncrementalChanges: options.sendIncrementalChanges,
                 allowHTMLContent: options.allowHTMLContent,
                 useSnippetOnCompletion: options.useSnippetOnCompletion,
+                clientSideFiltering: options.clientSideFiltering,
                 onGoToDefinition: options.onGoToDefinition,
                 markdownRenderer: options.markdownRenderer,
             }),
@@ -1701,9 +1735,24 @@ export function languageServerWithClient(options: LanguageServerOptions) {
 
     // Only add autocompletion if enabled
     if (featuresOptions.completionEnabled) {
+        const userOptionClass = options.completionConfig?.optionClass;
         extensions.push(
+            // Hosts can override via `.cm-tooltip-autocomplete li.cm-deprecated`
+            EditorView.baseTheme({
+                ".cm-tooltip-autocomplete li.cm-deprecated .cm-completionLabel":
+                    {
+                        textDecoration: "line-through",
+                    },
+            }),
             autocompletion({
                 ...options.completionConfig,
+                optionClass: (completion) =>
+                    [
+                        completionOptionClass(completion),
+                        userOptionClass?.(completion) ?? "",
+                    ]
+                        .filter(Boolean)
+                        .join(" "),
                 override: [
                     /**
                      * Completion source function that handles LSP-based autocompletion
