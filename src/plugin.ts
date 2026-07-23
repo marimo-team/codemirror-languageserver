@@ -13,7 +13,6 @@ import {
     keymap,
     showTooltip,
 } from "@codemirror/view";
-import { WebSocketTransport } from "@open-rpc/client-js";
 import {
     CompletionTriggerKind,
     DiagnosticSeverity,
@@ -49,6 +48,7 @@ import {
     type LanguageServerWebsocketOptions,
     type Notification,
 } from "./lsp.js";
+import { WebSocketTransport } from "./transport.js";
 import {
     eventsFromChangeSet,
     isCompletionList,

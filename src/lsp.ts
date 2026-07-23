@@ -1,14 +1,15 @@
 import type { autocompletion } from "@codemirror/autocomplete";
 import type { hoverTooltip } from "@codemirror/view";
-import { Client, RequestManager } from "@open-rpc/client-js";
-import type { Transport } from "@open-rpc/client-js/build/transports/Transport.js";
 import type * as LSP from "vscode-languageserver-protocol";
+import {
+    ErrorCodes,
+    JSONRPCClient,
+    type JSONRPCRequest,
+    type JSONRPCResponse,
+    type Transport,
+} from "./jsonrpc.js";
 
 const TIMEOUT = 10000;
-
-// JSON-RPC error codes (https://www.jsonrpc.org/specification#error_object)
-const METHOD_NOT_FOUND = -32601;
-const INTERNAL_ERROR = -32603;
 
 // Client to server then server to client
 export interface LSPRequestMap {
@@ -76,48 +77,6 @@ export type Notification = {
 export type ServerRequestHandler<P = any, R = any> = (
     params: P,
 ) => Promise<R> | R;
-
-/** An incoming server->client JSON-RPC request frame */
-interface ServerRequest {
-    jsonrpc: "2.0";
-    id: number | string;
-    method: string;
-    params?: unknown;
-}
-
-interface JsonRpcResponse {
-    jsonrpc: "2.0";
-    id: number | string;
-    result?: unknown;
-    error?: { code: number; message: string };
-}
-
-function isServerRequest(frame: unknown): frame is ServerRequest {
-    if (frame == null || typeof frame !== "object" || Array.isArray(frame)) {
-        return false;
-    }
-    const candidate = frame as Partial<ServerRequest>;
-    // A JSON-RPC id of 0 is valid, so check for presence, not truthiness;
-    // frames with a method but no id are notifications, not requests
-    return (
-        typeof candidate.method === "string" &&
-        candidate.id !== undefined &&
-        candidate.id !== null
-    );
-}
-
-/**
- * Every @open-rpc/client-js transport funnels each incoming frame through its
- * TransportRequestManager, which silently drops server->client requests (and
- * can even mistake them for responses to in-flight client requests when ids
- * collide). The manager is the only transport-agnostic seam, so we access it
- * through this narrowed shape.
- */
-interface InterceptableTransport {
-    transportRequestManager?: {
-        resolveResponse(payload: string, emitError?: boolean): unknown;
-    };
-}
 
 /**
  * Maps client->server request methods to the static server capability that
@@ -303,9 +262,7 @@ export class LanguageServerClient {
     private workspaceFolders: LSP.WorkspaceFolder[] | null;
     private timeout: number;
 
-    private transport: Transport;
-    private requestManager: RequestManager;
-    private client: Client;
+    private client: JSONRPCClient;
     private initializationOptions: LanguageServerClientOptions["initializationOptions"];
     public clientCapabilities: LanguageServerClientOptions["capabilities"];
 
@@ -329,8 +286,6 @@ export class LanguageServerClient {
      * server announced it statically or dynamically.
      */
     public dynamicCapabilities = new Map<string, LSP.Registration>();
-    private detachServerRequestInterceptor?: () => void;
-    private serverResponseCount = 0;
     private isClosed = false;
 
     constructor({
@@ -344,21 +299,19 @@ export class LanguageServerClient {
     }: LanguageServerClientOptions) {
         this.rootUri = rootUri;
         this.workspaceFolders = workspaceFolders;
-        this.transport = transport;
         this.initializationOptions = initializationOptions;
         this.clientCapabilities = capabilities;
         this.timeout = timeout;
         this.ready = false;
         this.capabilities = null;
-        this.requestManager = new RequestManager([this.transport]);
-        this.client = new Client(this.requestManager);
+        this.client = new JSONRPCClient(transport);
 
-        this.client.onNotification((data) => {
-            this.processNotification(data as Notification);
+        this.client.onNotification((notification) => {
+            this.processNotification(notification as unknown as Notification);
         });
-
-        this.detachServerRequestInterceptor =
-            this.attachServerRequestInterceptor(this.transport);
+        this.client.onRequest((request) => {
+            void this.handleServerRequest(request);
+        });
 
         this.onRequest(
             "workspace/configuration",
@@ -570,8 +523,6 @@ export class LanguageServerClient {
         this.notificationListeners.clear();
         this.serverRequestHandlers.clear();
         this.dynamicCapabilities.clear();
-        this.detachServerRequestInterceptor?.();
-        this.detachServerRequestInterceptor = undefined;
         this.client.close();
     }
 
@@ -616,50 +567,20 @@ export class LanguageServerClient {
     }
 
     /**
-     * Patches the transport's TransportRequestManager so server->client
-     * requests are dispatched to {@link serverRequestHandlers} instead of
-     * being silently dropped (or, worse, matched against a pending client
-     * request with a colliding id). Responses and notifications still flow
-     * through the original code path untouched.
+     * Answers a server-initiated request by running its registered handler and
+     * sending the result (or error) back to the server. Requests with no
+     * handler get a spec-compliant `MethodNotFound` so servers can fall back
+     * gracefully.
      */
-    private attachServerRequestInterceptor(
-        transport: Transport,
-    ): (() => void) | undefined {
-        const manager = (transport as unknown as InterceptableTransport)
-            .transportRequestManager;
-        if (!manager || typeof manager.resolveResponse !== "function") {
-            return undefined;
-        }
-        const original = manager.resolveResponse.bind(manager);
-        manager.resolveResponse = (payload: string, emitError?: boolean) => {
-            if (typeof payload === "string") {
-                let frame: unknown;
-                try {
-                    frame = JSON.parse(payload);
-                } catch {
-                    frame = undefined;
-                }
-                if (isServerRequest(frame)) {
-                    void this.handleServerRequest(frame);
-                    return undefined;
-                }
-            }
-            return original(payload, emitError);
-        };
-        return () => {
-            manager.resolveResponse = original;
-        };
-    }
-
-    private async handleServerRequest(request: ServerRequest): Promise<void> {
+    private async handleServerRequest(request: JSONRPCRequest): Promise<void> {
         const handler = this.serverRequestHandlers.get(request.method);
-        let response: JsonRpcResponse;
+        let response: JSONRPCResponse;
         if (!handler) {
             response = {
                 jsonrpc: "2.0",
                 id: request.id,
                 error: {
-                    code: METHOD_NOT_FOUND,
+                    code: ErrorCodes.MethodNotFound,
                     message: `Method not found: ${request.method}`,
                 },
             };
@@ -669,8 +590,8 @@ export class LanguageServerClient {
                 response = {
                     jsonrpc: "2.0",
                     id: request.id,
-                    // JSON.stringify drops `result: undefined`, which would
-                    // produce a spec-invalid response; send an explicit null
+                    // A JSON-RPC result member is required; coerce a handler's
+                    // undefined to an explicit null.
                     result: result === undefined ? null : result,
                 };
             } catch (error) {
@@ -678,7 +599,7 @@ export class LanguageServerClient {
                     jsonrpc: "2.0",
                     id: request.id,
                     error: {
-                        code: INTERNAL_ERROR,
+                        code: ErrorCodes.InternalError,
                         message:
                             error instanceof Error
                                 ? error.message
@@ -690,21 +611,7 @@ export class LanguageServerClient {
         if (this.isClosed) {
             return;
         }
-        // sendData wraps outgoing payloads in {internalID, request} and sends
-        // `request` verbatim, so a raw response object rides through any
-        // transport. Because the response carries an id, the transport tracks
-        // it as if it were a request awaiting an answer that never comes; the
-        // timeout cleans up that entry and the rejection is expected.
-        const internalID = `codemirror-languageserver:server-reply:${this.serverResponseCount++}`;
-        try {
-            await this.transport.sendData(
-                // biome-ignore lint/suspicious/noExplicitAny: a response frame is not part of JSONRPCRequestData
-                { internalID, request: response as any },
-                this.timeout,
-            );
-        } catch {
-            // Expected: responses get no acknowledgement
-        }
+        void this.client.respond(response);
     }
 
     public textDocumentDidOpen(params: LSP.DidOpenTextDocumentParams) {
@@ -818,14 +725,16 @@ export class LanguageServerClient {
         params: LSPRequestMap[K][0],
         timeout: number,
     ): Promise<LSPRequestMap[K][1]> {
-        return this.client.request({ method, params }, timeout);
+        return this.client.request(method, params, timeout) as Promise<
+            LSPRequestMap[K][1]
+        >;
     }
 
     protected notify<K extends keyof LSPNotifyMap>(
         method: K,
         params: LSPNotifyMap[K],
-    ): Promise<LSPNotifyMap[K]> {
-        return this.client.notify({ method, params });
+    ): Promise<void> {
+        return this.client.notify(method, params);
     }
 
     protected processNotification(notification: Notification) {

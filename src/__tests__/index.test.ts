@@ -1,7 +1,14 @@
 import { EditorState, Text } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { WebSocketTransport } from "@open-rpc/client-js";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+    afterAll,
+    beforeAll,
+    beforeEach,
+    describe,
+    expect,
+    it,
+    vi,
+} from "vitest";
 import type {
     CompletionItem,
     Definition,
@@ -11,19 +18,29 @@ import type {
 } from "vscode-languageserver-protocol";
 import { LanguageServerClient } from "../lsp";
 import { languageServer, languageServerWithClient } from "../plugin";
+import { FakeTransport } from "../testing/fakeTransport";
 import { offsetToPos, posToOffset } from "../utils";
 
-// Mock WebSocket transport
-vi.mock("@open-rpc/client-js", () => ({
-    WebSocketTransport: vi.fn(),
-    Client: vi.fn(() => ({
-        request: vi.fn().mockResolvedValue({}),
-        notify: vi.fn(),
-        onNotification: vi.fn(),
-        close: vi.fn(),
-    })),
-    RequestManager: vi.fn(),
-}));
+// The `languageServer({ serverUri })` integration test drives the real
+// WebSocketTransport. Stub the global WebSocket so it never opens a real
+// connection (jsdom otherwise dials `ws://test` and rejects on the ".test"
+// public suffix).
+class StubWebSocket {
+    static readonly OPEN = 1;
+    readyState = 0;
+    addEventListener(): void {}
+    removeEventListener(): void {}
+    send(): void {}
+    close(): void {}
+}
+
+beforeAll(() => {
+    vi.stubGlobal("WebSocket", StubWebSocket);
+});
+
+afterAll(() => {
+    vi.unstubAllGlobals();
+});
 
 const createMockClient = (
     init?: Partial<LanguageServerClient>,
@@ -91,14 +108,21 @@ describe("LanguageServer", () => {
 
     describe("LanguageServerClient", () => {
         let client: LanguageServerClient;
-        const mockTransport = new WebSocketTransport("ws://test");
 
         beforeEach(() => {
             client = new LanguageServerClient({
-                transport: mockTransport,
+                transport: new FakeTransport(),
                 rootUri: "file:///test",
                 workspaceFolders: [{ uri: "file:///test", name: "test" }],
             });
+            // Drive the internal JSON-RPC client directly; the transport
+            // handshake is exercised separately.
+            // biome-ignore lint/suspicious/noExplicitAny: test override
+            (client as any).client.request = vi.fn().mockResolvedValue({});
+            // biome-ignore lint/suspicious/noExplicitAny: test override
+            (client as any).client.notify = vi
+                .fn()
+                .mockResolvedValue(undefined);
         });
 
         it("should initialize with correct capabilities", async () => {
@@ -147,10 +171,8 @@ describe("LanguageServer", () => {
 
             // biome-ignore lint/suspicious/noExplicitAny: <explanation>
             expect((client as any).client.request).toHaveBeenCalledWith(
-                {
-                    method: "completionItem/resolve",
-                    params: mockCompletionItem,
-                },
+                "completionItem/resolve",
+                mockCompletionItem,
                 10000,
             );
             expect(result).toEqual(resolvedItem);
@@ -170,10 +192,10 @@ describe("LanguageServer", () => {
             await client.textDocumentDidChange(params);
 
             // biome-ignore lint/suspicious/noExplicitAny: <explanation>
-            expect((client as any).client.notify).toHaveBeenCalledWith({
-                method: "textDocument/didChange",
+            expect((client as any).client.notify).toHaveBeenCalledWith(
+                "textDocument/didChange",
                 params,
-            });
+            );
         });
     });
 
@@ -475,8 +497,12 @@ describe("exports", () => {
         const exports = await import("../index");
         expect(Object.keys(exports).sort()).toMatchInlineSnapshot(`
           [
+            "ErrorCodes",
+            "JSONRPCClient",
             "LanguageServerClient",
             "LanguageServerPlugin",
+            "RPCError",
+            "WebSocketTransport",
             "documentUri",
             "getLanguageServerPlugin",
             "languageId",

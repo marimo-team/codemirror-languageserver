@@ -1,6 +1,5 @@
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { Transport } from "@open-rpc/client-js/build/transports/Transport";
 import { describe, expect, it, vi } from "vitest";
 import type {
     ClientCapabilities,
@@ -8,16 +7,9 @@ import type {
 } from "vscode-languageserver-protocol";
 import { type FeatureOptions, LanguageServerClient } from "../lsp";
 import { LanguageServerPlugin } from "../plugin";
+import { FakeTransport } from "../testing/fakeTransport";
 
-class MockTransport extends Transport {
-    sendData = vi.fn().mockResolvedValue({});
-    subscribe = vi.fn();
-    unsubscribe = vi.fn();
-    connect = vi.fn().mockResolvedValue({});
-    close = vi.fn();
-}
-
-const transport = new MockTransport();
+const transport = new FakeTransport();
 
 class MockLanguageServerPlugin extends LanguageServerPlugin {
     public applyRenameEdit(
@@ -138,8 +130,8 @@ it("handles rename preparation and execution", async () => {
 
     // Mock the client's methods for rename
     // biome-ignore lint/suspicious/noExplicitAny: tests
-    (client as any).client.request = vi.fn().mockImplementation((request) => {
-        if (request.method === "textDocument/prepareRename") {
+    (client as any).client.request = vi.fn().mockImplementation((method) => {
+        if (method === "textDocument/prepareRename") {
             return Promise.resolve({
                 range: {
                     start: { line: 1, character: 5 },
@@ -147,7 +139,7 @@ it("handles rename preparation and execution", async () => {
                 },
             });
         }
-        if (request.method === "textDocument/rename") {
+        if (method === "textDocument/rename") {
             return Promise.resolve({
                 changes: {
                     "file:///root/file.ts": [
@@ -222,25 +214,21 @@ it("handles rename preparation and execution", async () => {
     // Verify the correct methods were called
     // biome-ignore lint/suspicious/noExplicitAny: tests
     expect((client as any).client.request).toHaveBeenCalledWith(
+        "textDocument/prepareRename",
         {
-            method: "textDocument/prepareRename",
-            params: {
-                textDocument: { uri: "file:///root/file.ts" },
-                position: { line: 1, character: 5 },
-            },
+            textDocument: { uri: "file:///root/file.ts" },
+            position: { line: 1, character: 5 },
         },
         10000,
     );
 
     // biome-ignore lint/suspicious/noExplicitAny: tests
     expect((client as any).client.request).toHaveBeenCalledWith(
+        "textDocument/rename",
         {
-            method: "textDocument/rename",
-            params: {
-                textDocument: { uri: "file:///root/file.ts" },
-                position: { line: 1, character: 5 },
-                newName: "newName",
-            },
+            textDocument: { uri: "file:///root/file.ts" },
+            position: { line: 1, character: 5 },
+            newName: "newName",
         },
         10000,
     );
@@ -264,8 +252,8 @@ it("applies rename changes correctly to a document", async () => {
     (client as any).client.request = vi
         .fn()
         // biome-ignore lint/suspicious/noExplicitAny: <explanation>
-        .mockImplementation((request: any) => {
-            if (request.method === "textDocument/rename") {
+        .mockImplementation((method: any) => {
+            if (method === "textDocument/rename") {
                 return Promise.resolve<WorkspaceEdit>({
                     documentChanges: [
                         {
@@ -343,8 +331,8 @@ it("applies rename the whole cell", async () => {
 
     // Mock the client's methods for rename
     // biome-ignore lint/suspicious/noExplicitAny: tests
-    (client as any).client.request = vi.fn().mockImplementation((request) => {
-        if (request.method === "textDocument/rename") {
+    (client as any).client.request = vi.fn().mockImplementation((method) => {
+        if (method === "textDocument/rename") {
             return Promise.resolve<WorkspaceEdit>({
                 documentChanges: [
                     {

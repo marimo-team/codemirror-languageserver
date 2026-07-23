@@ -39,20 +39,6 @@ vi.mock("../utils.js", () => ({
     showErrorMessage: vi.fn(),
 }));
 
-// Mock the Client from @open-rpc/client-js
-vi.mock("@open-rpc/client-js", () => ({
-    Client: vi.fn().mockImplementation(() => ({
-        request: vi.fn().mockResolvedValue({}),
-        notify: vi.fn().mockResolvedValue(undefined),
-        close: vi.fn(),
-        onNotification: vi.fn(),
-        onRequest: vi.fn(),
-    })),
-    RequestManager: vi.fn().mockImplementation(() => ({
-        requestTimeoutMs: 10000,
-    })),
-}));
-
 const createMockClient = (): LanguageServerClient => {
     const mockClient = {
         ready: true,

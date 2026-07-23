@@ -1,11 +1,11 @@
 import { EditorState } from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
-import { Transport } from "@open-rpc/client-js/build/transports/Transport.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type * as LSP from "vscode-languageserver-protocol";
 import { CompletionTriggerKind } from "vscode-languageserver-protocol";
 import { type FeatureOptions, LanguageServerClient } from "../lsp.js";
 import { LanguageServerPlugin } from "../plugin.js";
+import { FakeTransport } from "../testing/fakeTransport.js";
 
 // Note: jsdom environment provides document
 
@@ -50,53 +50,14 @@ vi.mock("../utils.js", () => ({
     showErrorMessage: vi.fn(),
 }));
 
-// Mock the Client from @open-rpc/client-js
-vi.mock("@open-rpc/client-js", () => ({
-    Client: vi.fn().mockImplementation(() => ({
-        request: vi.fn().mockResolvedValue({}),
-        notify: vi.fn().mockResolvedValue(undefined),
-        close: vi.fn(),
-        onNotification: vi.fn(),
-        onRequest: vi.fn(),
-    })),
-    RequestManager: vi.fn().mockImplementation(() => ({
-        requestTimeoutMs: 10000,
-    })),
-}));
-
-// Create a simple mock transport
-class MockTransport extends Transport {
-    sendData = vi.fn().mockResolvedValue({});
-    subscribe = vi.fn();
-    unsubscribe = vi.fn();
-    connect = vi.fn().mockResolvedValue({});
-    close = vi.fn();
-
-    emit = vi.fn();
-    addListener = vi.fn();
-    on = vi.fn();
-    once = vi.fn();
-    removeListener = vi.fn();
-    off = vi.fn();
-    removeAllListeners = vi.fn();
-    setMaxListeners = vi.fn();
-    getMaxListeners = vi.fn();
-    listeners = vi.fn();
-    rawListeners = vi.fn();
-    listenerCount = vi.fn();
-    prependListener = vi.fn();
-    prependOnceListener = vi.fn();
-    eventNames = vi.fn();
-}
-
 describe("LanguageServerPlugin", () => {
     let mockClient: LanguageServerClient;
-    let mockTransport: MockTransport;
+    let mockTransport: FakeTransport;
     let mockView: EditorView;
     let featureOptions: Required<FeatureOptions>;
 
     beforeEach(() => {
-        mockTransport = new MockTransport();
+        mockTransport = new FakeTransport();
 
         // Create a mock client
         mockClient = new LanguageServerClient({
