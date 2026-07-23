@@ -9,12 +9,46 @@
                 margin: 0;
                 padding: 20px;
                 font-family: system-ui, -apple-system, sans-serif;
+                max-width: 900px;
             }
-            #editor {
-                height: 400px;
+            #tabs {
+                display: flex;
+                gap: 4px;
+                margin-bottom: 16px;
+                border-bottom: 1px solid #ddd;
+            }
+            .tab {
+                padding: 8px 16px;
+                border: none;
+                border-bottom: 2px solid transparent;
+                background: transparent;
+                color: #444;
+                cursor: pointer;
+                font-size: 14px;
+            }
+            .tab:hover {
+                background: #f5f5f5;
+            }
+            .tab.active {
+                color: #4a90e2;
+                border-bottom-color: #4a90e2;
+                font-weight: 600;
+            }
+            .cm-editor {
+                height: 420px;
                 border: 1px solid #ddd;
                 border-radius: 4px;
-                margin-bottom: 20px;
+            }
+            .demo-hint {
+                margin: 0 0 12px;
+                color: #555;
+                font-size: 13px;
+                line-height: 1.5;
+            }
+            .demo-hint code {
+                background: #f0f0f0;
+                padding: 1px 4px;
+                border-radius: 3px;
             }
             .cm-rename-popup {
                 background: white;
@@ -29,7 +63,7 @@
                 font-family: inherit;
             }
             .demo-controls {
-                margin-bottom: 20px;
+                margin-bottom: 16px;
             }
             .demo-controls button {
                 margin-right: 8px;
@@ -47,12 +81,13 @@
     </head>
     <body>
         <h1>CodeMirror LSP Demo</h1>
-        <div class="demo-controls">
-            <button id="addError">Add Error</button>
-            <button id="addWarning">Add Warning</button>
-            <button id="clearDiagnostics">Clear Diagnostics</button>
-        </div>
-        <div id="editor"></div>
+        <p>
+            Three language servers, all running in the browser. Switch tabs to
+            try diagnostics, completion, hover, go-to-definition, signature
+            help, rename, and code actions.
+        </p>
+        <div id="tabs"></div>
+        <div id="demo-root"></div>
         <div>
             <h3>Keyboard Shortcuts:</h3>
             <ul>
