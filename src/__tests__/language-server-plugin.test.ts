@@ -40,6 +40,10 @@ vi.mock("../utils.js", () => ({
     }),
     eventsFromChangeSet: vi.fn().mockReturnValue([]),
     renderMarkdown: vi.fn().mockReturnValue(""),
+    renderDocumentation: vi.fn().mockImplementation((element, contents) => {
+        element.textContent =
+            typeof contents === "string" ? contents : (contents?.value ?? "");
+    }),
     showErrorMessage: vi.fn(),
 }));
 
@@ -660,7 +664,7 @@ describe("LanguageServerPlugin", () => {
 
         it("includes the diagnostic code in the source when present", async () => {
             const addDiagnosticsSpy = vi
-                .spyOn(plugin as never, "addDiagnostics")
+                .spyOn(plugin as never, "setOwnDiagnostics")
                 .mockImplementation(() => {});
 
             await plugin.processDiagnostics({
@@ -688,7 +692,7 @@ describe("LanguageServerPlugin", () => {
 
         it("leaves the source unchanged when no code is present", async () => {
             const addDiagnosticsSpy = vi
-                .spyOn(plugin as never, "addDiagnostics")
+                .spyOn(plugin as never, "setOwnDiagnostics")
                 .mockImplementation(() => {});
 
             await plugin.processDiagnostics({
@@ -711,7 +715,7 @@ describe("LanguageServerPlugin", () => {
 
         it("falls back to languageId when no source is provided", async () => {
             const addDiagnosticsSpy = vi
-                .spyOn(plugin as never, "addDiagnostics")
+                .spyOn(plugin as never, "setOwnDiagnostics")
                 .mockImplementation(() => {});
 
             await plugin.processDiagnostics({
@@ -734,7 +738,7 @@ describe("LanguageServerPlugin", () => {
 
         it("coerces numeric codes to strings in the source", async () => {
             const addDiagnosticsSpy = vi
-                .spyOn(plugin as never, "addDiagnostics")
+                .spyOn(plugin as never, "setOwnDiagnostics")
                 .mockImplementation(() => {});
 
             await plugin.processDiagnostics({

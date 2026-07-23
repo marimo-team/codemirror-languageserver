@@ -192,9 +192,9 @@ describe("convertCompletionItem", () => {
         const info = completion.info?.();
         expect(info).toBeDefined();
         expect(info?.classList.contains("documentation")).toBe(true);
-        expect(info?.textContent).toContain(
-            "<strong>Test</strong> documentation",
-        );
+        // Raw markdown is shown as text; rendered HTML tags must not leak in
+        expect(info?.textContent).toContain("**Test** documentation");
+        expect(info?.textContent).not.toContain("<strong>");
     });
 
     it("should handle completion item resolution", async () => {
@@ -474,15 +474,22 @@ describe("sortCompletionItems", () => {
 });
 
 describe("convertSnippet", () => {
-    it("should remove backslashes", () => {
-        const input = String.raw`filename\\/filename.txt`;
+    it("should unescape double backslashes to a single backslash", () => {
+        // Per the LSP snippet grammar, `\\` is an escaped literal backslash
+        const input = String.raw`C:\\Users\\name`;
         const result = convertSnippet(input);
-        expect(result).toBe("filename/filename.txt");
+        expect(result).toBe(String.raw`C:\Users\name`);
 
-        // but not single
+        // but literal text is untouched
         const input2 = "filename\n/filename.txt";
         const result2 = convertSnippet(input2);
         expect(result2).toBe("filename\n/filename.txt");
+    });
+
+    it("should treat escaped dollar signs as literal text, not tabstops", () => {
+        const input = String.raw`echo \$1`;
+        const result = convertSnippet(input);
+        expect(result).toBe("echo $1");
     });
 
     it("should convert $1 to ${1}", () => {
@@ -512,5 +519,14 @@ describe("convertSnippet", () => {
         const input = "function() { ${1:default} }";
         const result = convertSnippet(input);
         expect(result).toBe("function() { ${1:default} }");
+    });
+
+    it("keeps an escaped dollar before a brace from becoming a field", () => {
+        // LSP `\${1:price}` is literal text, not a tabstop. CodeMirror only
+        // treats `${...}` as a field, so the brace must be escaped so the
+        // sequence renders as the literal `${1:price}`.
+        const input = String.raw`\${1:price}`;
+        const result = convertSnippet(input);
+        expect(result).toBe(String.raw`$\{1:price}`);
     });
 });

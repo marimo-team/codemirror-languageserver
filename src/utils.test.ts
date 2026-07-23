@@ -278,16 +278,25 @@ describe("posToOffset", () => {
         expect(posToOffset(doc, { line: 2, character: 0 })).toBe(5); // Line far beyond document but character 0 returns doc.length
     });
 
-    it("should return undefined for character beyond line length", () => {
+    it("should clamp character beyond line length to the end of the line", () => {
+        // Per LSP spec: "If the character value is greater than the line
+        // length it defaults back to the line length."
         const doc = Text.of(["hello"]);
-        expect(posToOffset(doc, { line: 0, character: 10 })).toBeUndefined();
+        expect(posToOffset(doc, { line: 0, character: 10 })).toBe(5);
+    });
+
+    it("should not spill into the next line when character overflows", () => {
+        const doc = Text.of(["ab", "cdef"]);
+        // Offset 5 would be inside line 2 ("cdef"); it must clamp to 2 (end of line 1)
+        expect(posToOffset(doc, { line: 0, character: 5 })).toBe(2);
+        expect(posToOffset(doc, { line: 1, character: 100 })).toBe(7);
     });
 
     it("should handle empty document", () => {
         const doc = Text.of([""]);
         expect(posToOffset(doc, { line: 0, character: 0 })).toBe(0);
         expect(posToOffset(doc, { line: 1, character: 0 })).toBe(0);
-        expect(posToOffset(doc, { line: 0, character: 1 })).toBeUndefined();
+        expect(posToOffset(doc, { line: 0, character: 1 })).toBe(0);
     });
 
     it("should handle empty lines", () => {
@@ -359,9 +368,13 @@ describe("posToOffsetOrZero", () => {
         expect(posToOffsetOrZero(doc, { line: 0, character: 5 })).toBe(5);
     });
 
-    it("should return zero when position is invalid", () => {
+    it("should clamp character overflow to line end", () => {
         const doc = Text.of(["hello"]);
-        expect(posToOffsetOrZero(doc, { line: 0, character: 10 })).toBe(0);
+        expect(posToOffsetOrZero(doc, { line: 0, character: 10 })).toBe(5);
+    });
+
+    it("should return zero when the line is beyond the document", () => {
+        const doc = Text.of(["hello"]);
         expect(posToOffsetOrZero(doc, { line: 1, character: 5 })).toBe(0);
     });
 });

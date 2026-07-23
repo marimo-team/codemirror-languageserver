@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type * as LSP from "vscode-languageserver-protocol";
-import { formatContents } from "../utils";
+import { formatContents, renderDocumentation } from "../utils";
 
 describe("formatContents", () => {
     it("returns empty string for undefined input", () => {
@@ -120,7 +120,9 @@ describe("formatContents", () => {
             { language: "typescript", value: "const x = 1;" },
         ];
         const result = formatContents(contents);
-        expect(result).toMatchInlineSnapshot(`"first string"`);
+        expect(result).toContain("first string");
+        expect(result).toContain('<code class="language-typescript">');
+        expect(result).toContain("const x = 1;");
     });
 
     it("handles empty array", () => {
@@ -132,7 +134,9 @@ describe("formatContents", () => {
             language: "javascript",
             value: "console.log('test');",
         };
-        expect(formatContents(content)).toMatchInlineSnapshot(`""`);
+        const result = formatContents(content);
+        expect(result).toContain('<code class="language-javascript">');
+        expect(result).toContain("console.log");
     });
 
     it("allows specifying a custom markdown renderer", () => {
@@ -144,5 +148,59 @@ describe("formatContents", () => {
         expect(formatContents(content, customRenderer)).toBe(
             "<p>Custom renderer test</p>",
         );
+    });
+});
+
+describe("renderDocumentation", () => {
+    const markdownContent: LSP.MarkupContent = {
+        kind: "markdown",
+        value: "**bold** text",
+    };
+
+    it("renders markdown as HTML when HTML content is allowed", () => {
+        const el = document.createElement("div");
+        renderDocumentation(el, markdownContent, { allowHTMLContent: true });
+        expect(el.innerHTML).toContain("<strong>bold</strong>");
+    });
+
+    it("does not show HTML markup as literal text when HTML is not allowed", () => {
+        const el = document.createElement("div");
+        renderDocumentation(el, markdownContent, { allowHTMLContent: false });
+        // The raw markdown source is shown, never rendered HTML tags as text
+        expect(el.textContent).not.toContain("<p>");
+        expect(el.textContent).not.toContain("<strong>");
+        expect(el.textContent).toContain("bold");
+        // No live HTML elements were created
+        expect(el.querySelector("strong")).toBeNull();
+    });
+
+    it("renders plaintext content as-is in both modes", () => {
+        const content: LSP.MarkupContent = {
+            kind: "plaintext",
+            value: "1 < 2 && 3 > 2",
+        };
+        const plain = document.createElement("div");
+        renderDocumentation(plain, content, { allowHTMLContent: false });
+        expect(plain.textContent).toBe("1 < 2 && 3 > 2");
+    });
+
+    it("shows MarkedString values in plaintext mode", () => {
+        const el = document.createElement("div");
+        renderDocumentation(
+            el,
+            { language: "python", value: "def foo(): ..." },
+            { allowHTMLContent: false },
+        );
+        expect(el.textContent).toContain("def foo(): ...");
+        expect(el.textContent).not.toContain("<code");
+    });
+
+    it("uses a custom markdown renderer when provided", () => {
+        const el = document.createElement("div");
+        renderDocumentation(el, markdownContent, {
+            allowHTMLContent: true,
+            markdownRenderer: (md) => `<custom>${md}</custom>`,
+        });
+        expect(el.innerHTML).toContain("<custom>");
     });
 });
