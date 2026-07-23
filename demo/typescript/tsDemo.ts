@@ -8,28 +8,32 @@ import { createWorkerClient } from "../shared/workerTransport";
 
 const DOCUMENT_URI = "file:///index.ts";
 
-const SAMPLE = `// TypeScript running entirely in your browser (typescript + @typescript/vfs).
-// Try these features:
-//  - Hover over 'greet' or 'user' to see inferred types
-//  - Type 'user.' for completions
-//  - Ctrl/Cmd+Click 'greet' to jump to its definition
-//  - Put the cursor inside greet(...) for signature help
-//  - Press F2 on 'user' to rename it
-//  - The line below has a type error on purpose
+const SAMPLE = `// TypeScript · runs entirely in your browser (typescript + @typescript/vfs)
+// hover · go-to-def (Ctrl/Cmd+Click) · completions (Ctrl/Cmd+Space) · F2 rename
 
 interface User {
     name: string;
     age: number;
 }
 
-function greet(user: User): string {
+/** @deprecated Use greet() instead. */
+function hi(user: User): string {          // deprecated → struck through on use
+    return "hi " + user.name;
+}
+
+function greet(user: User): string {       // hover for its type · go-to-def target
+    const unused = "never read";           // unused local variable → diagnostic
     return \`Hello, \${user.name} (\${user.age})\`;
 }
 
-const user: User = { name: "Ada", age: 36 };
-console.log(greet(user));
+const ada: User = { name: "Ada", age: 36 };
 
-const wrong: number = "not a number";
+greet(ada);        // put the cursor inside (…) for signature help; F2 renames \`ada\`
+hi(ada);           // deprecated call → struck through
+
+ada.name;          // type \`ada.\` and press Ctrl/Cmd+Space for completions
+
+const total: number = "oops";     // type error: string is not assignable to number
 `;
 
 /**

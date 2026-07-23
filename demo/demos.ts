@@ -10,7 +10,7 @@ export interface Demo {
 }
 
 export const DEMOS: Demo[] = [
-    { id: "mock", label: "Mock · in-memory", mount: mountMockDemo },
-    { id: "python", label: "Python · Ruff", mount: mountPythonDemo },
+    { id: "python", label: "Python · Ruff + ty", mount: mountPythonDemo },
     { id: "typescript", label: "TypeScript · vfs", mount: mountTypeScriptDemo },
+    { id: "mock", label: "Mock · in-memory", mount: mountMockDemo },
 ];

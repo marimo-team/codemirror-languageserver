@@ -4,6 +4,7 @@ import type * as LSP from "vscode-languageserver-protocol";
 import {
     CompletionItemKind,
     DiagnosticSeverity,
+    DiagnosticTag,
     TextDocumentSyncKind,
 } from "vscode-languageserver-protocol";
 
@@ -60,6 +61,9 @@ export class TsServer {
         const raw = [
             ...this.ls.getSyntacticDiagnostics(this.fileName),
             ...this.ls.getSemanticDiagnostics(this.fileName),
+            // Suggestion diagnostics carry @deprecated markers (and unused
+            // hints), letting the demo showcase deprecated + unnecessary tags.
+            ...this.ls.getSuggestionDiagnostics(this.fileName),
         ];
         return {
             uri,
@@ -231,6 +235,13 @@ export class TsServer {
     private toLspDiagnostic(diagnostic: ts.Diagnostic): LSP.Diagnostic {
         const start = diagnostic.start ?? 0;
         const length = diagnostic.length ?? 0;
+        const tags: LSP.DiagnosticTag[] = [];
+        if (diagnostic.reportsUnnecessary) {
+            tags.push(DiagnosticTag.Unnecessary);
+        }
+        if (diagnostic.reportsDeprecated) {
+            tags.push(DiagnosticTag.Deprecated);
+        }
         return {
             range: this.rangeFromSpan(this.fileName, { start, length }),
             message: ts.flattenDiagnosticMessageText(
@@ -239,6 +250,7 @@ export class TsServer {
             ),
             code: diagnostic.code,
             severity: mapCategory(diagnostic.category),
+            tags: tags.length > 0 ? tags : undefined,
             source: "ts",
         };
     }

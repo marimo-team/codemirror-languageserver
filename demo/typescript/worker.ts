@@ -18,6 +18,8 @@ const COMPILER_OPTIONS: ts.CompilerOptions = {
     module: ts.ModuleKind.ESNext,
     moduleResolution: ts.ModuleResolutionKind.Bundler,
     strict: true,
+    // Surface unused locals as diagnostics so the demo can show them off.
+    noUnusedLocals: true,
 };
 
 // Building the environment fetches the TypeScript lib .d.ts files from a CDN

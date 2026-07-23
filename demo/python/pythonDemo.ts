@@ -8,17 +8,24 @@ import { createWorkerClient } from "../shared/workerTransport";
 
 const DOCUMENT_URI = "file:///main.py";
 
-const SAMPLE = `import os
-import sys
+const SAMPLE = `# Python · Ruff (lint + format) + ty (types) — both WASM, in a Web Worker
+# Hover a squiggle for a quick-fix · "Fix all" · "Format document"
+
+import os                      # unused import → Ruff F401
+import sys                     # unused import → "Fix all" removes both
+from typing import List
 
 
 def greet(name: str) -> str:
+    greeting = "Hi"            # F841: local assigned but never used
     return "Hello, " + name
 
 
-# Ruff flags the unused imports above; ty flags the type error below.
-message: int = greet("world")
-print( message )
+message: int = greet("world")  # ty: str is not assignable to int
+
+items: List[int] = [1, 2, 3]
+print( items )                 # extra spaces → "Format document" tidies them
+print(mesage)                  # Ruff F821: undefined name (typo of "message")
 `;
 
 // Python editor backed by Ruff (and ty, when its WASM build is vendored in),
@@ -27,10 +34,11 @@ export function mountPythonDemo(container: HTMLElement): () => void {
     const hint = document.createElement("p");
     hint.className = "demo-hint";
     hint.innerHTML =
-        "Backed by <code>@astral-sh/ruff-wasm-web</code> (lint + format) in a " +
-        "Web Worker, plus <code>ty</code> type-checking when built via " +
-        "<code>pnpm build:ty-wasm</code>. Hover a diagnostic for quick-fix, " +
-        "<em>Fix all</em>, and <em>Format document</em> actions.";
+        "Backed by <code>@astral-sh/ruff-wasm-web</code> (lint + format) and " +
+        "<code>ty</code> (type-checking), both WASM in a Web Worker. Hover a " +
+        "diagnostic for quick-fix, <em>Fix all</em>, and <em>Format document</em> " +
+        "actions. Locally, run <code>pnpm build:ty-wasm</code> to enable ty; " +
+        "the deployed demo builds it in CI.";
     container.appendChild(hint);
 
     const worker = new Worker(new URL("./worker.ts", import.meta.url), {
