@@ -1,14 +1,7 @@
 #!/usr/bin/env bash
 #
-# Build the `ty` (Astral's Python type checker) WASM module and vendor it into
-# the demo so the Python tab can show type-check diagnostics alongside Ruff.
-#
-# `ty_wasm` is not published to npm, so we build it from the ruff monorepo with
-# wasm-pack (exactly like the ty playground does). The output lands in
-# demo/vendor/ty_wasm/ (gitignored by default). Without it, the Python demo
-# gracefully falls back to Ruff only.
-#
-# Requirements: Rust toolchain, wasm-pack, and git.
+# Build ty_wasm from the ruff monorepo and vendor it into demo/vendor/ty_wasm/.
+# Requires a Rust toolchain, wasm-pack, and git.
 #
 # Usage:
 #   pnpm build:ty-wasm

@@ -21,12 +21,8 @@ message: int = greet("world")
 print( message )
 `;
 
-/**
- * Mounts a Python editor backed by Ruff (WASM) running in a Web Worker, plus
- * ty (Astral's type checker) when its WASM build has been vendored in.
- * Exercises diagnostics (lint + type errors), quick-fix / fix-all code actions,
- * and formatting (the latter surface as actions in each diagnostic's tooltip).
- */
+// Python editor backed by Ruff (and ty, when its WASM build is vendored in),
+// both in a Web Worker.
 export function mountPythonDemo(container: HTMLElement): () => void {
     const hint = document.createElement("p");
     hint.className = "demo-hint";

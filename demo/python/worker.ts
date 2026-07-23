@@ -15,7 +15,6 @@ const RUFF_CONFIG = {
     },
 };
 
-// Structural type for the (optional) ty_wasm module. See tyServer.ts.
 interface TyModule {
     default: (moduleOrPath?: unknown) => Promise<unknown>;
     Workspace: new (
@@ -31,12 +30,9 @@ interface PythonServers {
     ty: TyServer | null;
 }
 
-/**
- * Optionally load ty (Astral's type checker) from the vendored WASM build. The
- * artifact isn't published to npm; `import.meta.glob` resolves to an empty map
- * when demo/vendor/ty_wasm/ is absent, so the demo falls back to Ruff-only and
- * still builds without a Rust toolchain. Run `pnpm build:ty-wasm` to enable it.
- */
+// ty_wasm isn't published to npm. import.meta.glob resolves to an empty map when
+// demo/vendor/ty_wasm/ is absent, so the demo falls back to Ruff-only without a
+// Rust toolchain. Run `pnpm build:ty-wasm` to enable it.
 async function loadTy(): Promise<TyServer | null> {
     const modules = import.meta.glob("../vendor/ty_wasm/ty_wasm.js");
     const loader = modules["../vendor/ty_wasm/ty_wasm.js"];
@@ -54,8 +50,6 @@ async function loadTy(): Promise<TyServer | null> {
     }
 }
 
-// Load both engines once; handlers await this so messages that arrive during
-// initialization aren't dropped.
 const ready = (async (): Promise<PythonServers> => {
     await init();
     const ruff = new RuffServer(
@@ -66,7 +60,6 @@ const ready = (async (): Promise<PythonServers> => {
 })();
 
 function publish(servers: PythonServers, uri: string, text: string): void {
-    // Merge Ruff's lint diagnostics with ty's type-check diagnostics.
     const ruffParams = servers.ruff.setDocument(uri, text);
     const tyDiagnostics = servers.ty?.setDocument(uri, text) ?? [];
     publishDiagnostics({
