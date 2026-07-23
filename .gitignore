@@ -3,3 +3,7 @@ dist/
 coverage
 
 *.sublime-*
+
+# ruff checkout used to build ty_wasm (see scripts/build-ty-wasm.sh).
+# The built artifact in demo/vendor/ty_wasm/ IS committed so GitHub Pages serves it.
+.cache/

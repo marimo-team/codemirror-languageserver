@@ -1,0 +1,4 @@
+# Vendored ty_wasm build (see scripts/build-ty-wasm.sh) — treat as generated
+# binary so diffs stay collapsed and it's excluded from language stats.
+demo/vendor/ty_wasm/** linguist-generated=true
+demo/vendor/ty_wasm/*.wasm binary
