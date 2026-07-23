@@ -24,6 +24,7 @@
         "dev": "vite",
         "build": "tsc",
         "build:demo": "vite build",
+        "build:ty-wasm": "bash scripts/build-ty-wasm.sh",
         "lint": "biome check --write",
         "lint:ci": "biome check",
         "typecheck": "tsc --noEmit",

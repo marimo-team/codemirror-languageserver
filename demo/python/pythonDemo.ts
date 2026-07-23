@@ -12,26 +12,29 @@ const SAMPLE = `import os
 import sys
 
 
-def greet(name):
-    message = "Hello, " + name
-    print( message )
+def greet(name: str) -> str:
+    return "Hello, " + name
 
 
-greet("world")
+# Ruff flags the unused imports above; ty flags the type error below.
+message: int = greet("world")
+print( message )
 `;
 
 /**
- * Mounts a Python editor backed by Ruff (WASM) running in a Web Worker.
- * Exercises diagnostics, quick-fix / fix-all code actions, and formatting
- * (the latter two surface as actions in each diagnostic's tooltip).
+ * Mounts a Python editor backed by Ruff (WASM) running in a Web Worker, plus
+ * ty (Astral's type checker) when its WASM build has been vendored in.
+ * Exercises diagnostics (lint + type errors), quick-fix / fix-all code actions,
+ * and formatting (the latter surface as actions in each diagnostic's tooltip).
  */
 export function mountPythonDemo(container: HTMLElement): () => void {
     const hint = document.createElement("p");
     hint.className = "demo-hint";
     hint.innerHTML =
-        "Backed by <code>@astral-sh/ruff-wasm-web</code> in a Web Worker. " +
-        "Hover a diagnostic to see quick-fix, <em>Fix all</em>, and " +
-        "<em>Format document</em> actions.";
+        "Backed by <code>@astral-sh/ruff-wasm-web</code> (lint + format) in a " +
+        "Web Worker, plus <code>ty</code> type-checking when built via " +
+        "<code>pnpm build:ty-wasm</code>. Hover a diagnostic for quick-fix, " +
+        "<em>Fix all</em>, and <em>Format document</em> actions.";
     container.appendChild(hint);
 
     const worker = new Worker(new URL("./worker.ts", import.meta.url), {

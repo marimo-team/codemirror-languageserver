@@ -3,3 +3,7 @@ dist/
 coverage
 
 *.sublime-*
+
+# Locally-built ty WASM artifact and its ruff checkout (see scripts/build-ty-wasm.sh)
+demo/vendor/
+.cache/

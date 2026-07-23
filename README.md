@@ -114,7 +114,23 @@ Please ensure your PR includes appropriate tests and documentation.
 
 ## Demo
 
-Check out our [live demo](https://github.com/mscolnick/codemirror-languageserver/tree/main/demo) to see the plugin in action.
+Check out our [live demo](https://github.com/mscolnick/codemirror-languageserver/tree/main/demo) to see the plugin in action. Run it locally with `pnpm dev`.
+
+The demo has three tabs, all running in the browser via Web Workers:
+
+- **Mock** — an in-memory language server.
+- **Python** — [Ruff](https://github.com/astral-sh/ruff) (`@astral-sh/ruff-wasm-web`) for lint diagnostics, quick-fixes, and formatting.
+- **TypeScript** — a TypeScript language service over [`@typescript/vfs`](https://github.com/microsoft/TypeScript-Website/tree/v2/packages/typescript-vfs) for completion, hover, go-to-definition, diagnostics, signature help, and rename.
+
+### Optional: ty type-checking in the Python tab
+
+The Python tab can additionally surface type-check diagnostics from [ty](https://github.com/astral-sh/ty) (Astral's type checker) alongside Ruff's lint output. `ty` is not published to npm, so build its WASM module once (requires a Rust toolchain and [`wasm-pack`](https://rustwasm.github.io/wasm-pack/installer/)):
+
+```bash
+pnpm build:ty-wasm
+```
+
+This clones ruff into `.cache/` and vendors the build into `demo/vendor/ty_wasm/` (both gitignored). When present, the Python worker loads it automatically; when absent, the demo falls back to Ruff only.
 
 ## License
 
