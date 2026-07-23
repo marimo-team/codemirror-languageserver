@@ -37,4 +37,9 @@ fi
 echo "Building ty_wasm (this compiles a large Rust project; it can take a while)..."
 wasm-pack build "$RUFF_DIR/crates/ty_wasm" --target web --out-dir "$OUT_DIR"
 
+# wasm-pack drops a .gitignore ("*") in the out-dir; remove it so the artifact
+# is committable (GitHub Pages serves the vendored build).
+rm -f "$OUT_DIR/.gitignore"
+
 echo "Done. Vendored ty_wasm into $OUT_DIR"
+echo "Commit demo/vendor/ty_wasm/ so the live demo ships ty."
