@@ -223,6 +223,10 @@ export class LanguageServerClient {
      * may share one client and one URI (e.g. split views); the server should
      * see a single didOpen/didClose pair, so we only notify on the 0->1 and
      * 1->0 transitions.
+     *
+     * Note: this coalesces open/close only. didChange notifications and
+     * document versions remain per-plugin, so concurrently editing the same
+     * URI from multiple views is not fully synchronized.
      */
     private documentOpenCounts = new Map<string, number>();
     private webSocketConnection?: WebSocketTransport["connection"];

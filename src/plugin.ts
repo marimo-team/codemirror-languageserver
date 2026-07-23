@@ -98,6 +98,24 @@ export const suppressSignatureHelp = Annotation.define<boolean>();
 
 const SIGNATURE_TOOLTIP_MAX_LINES_BACK = 20;
 
+/**
+ * Maps each editor view to its active language server plugin so hosts can
+ * reach plugin methods (e.g. `documentDidSave`) without the private
+ * `ViewPlugin` token. If several language servers attach to one view, the
+ * most recently constructed plugin wins.
+ */
+const pluginRegistry = new WeakMap<EditorView, LanguageServerPlugin>();
+
+/**
+ * Returns the language server plugin attached to a view, if any. Useful for
+ * invoking host-driven actions such as {@link LanguageServerPlugin.documentDidSave}.
+ */
+export function getLanguageServerPlugin(
+    view: EditorView,
+): LanguageServerPlugin | undefined {
+    return pluginRegistry.get(view);
+}
+
 export class LanguageServerPlugin implements PluginValue {
     private documentVersion: number;
     private pluginId: string;
@@ -182,6 +200,7 @@ export class LanguageServerPlugin implements PluginValue {
         this.featureOptions = featureOptions;
         this.onGoToDefinition = onGoToDefinition;
         this.markdownRenderer = markdownRenderer;
+        pluginRegistry.set(view, this);
         this.disposeListener = client.onNotification(
             this.processNotification.bind(this),
         );
@@ -227,17 +246,31 @@ export class LanguageServerPlugin implements PluginValue {
         this.destroyed = true;
         this.disposeListener?.();
         this.disposeListener = undefined;
+        if (pluginRegistry.get(this.view) === this) {
+            pluginRegistry.delete(this.view);
+        }
+        this.closeDocument();
+    }
+
+    /**
+     * Sends `textDocument/didClose` for a document this plugin opened,
+     * releasing its reference on the shared client's open-count. Safe to call
+     * more than once and before the document was opened.
+     */
+    private closeDocument() {
         // Only close a document we actually opened - a view torn down during
         // its initial async tick may never have sent didOpen
-        if (this.documentOpened && this.client.ready) {
-            Promise.resolve(
-                this.client.textDocumentDidClose({
-                    textDocument: { uri: this.documentUri },
-                }),
-            ).catch((error) => {
-                console.error("Failed to send didClose", error);
-            });
+        if (!(this.documentOpened && this.client.ready)) {
+            return;
         }
+        this.documentOpened = false;
+        Promise.resolve(
+            this.client.textDocumentDidClose({
+                textDocument: { uri: this.documentUri },
+            }),
+        ).catch((error) => {
+            console.error("Failed to send didClose", error);
+        });
     }
 
     public async initialize({ documentText }: { documentText?: string } = {}) {
@@ -258,6 +291,12 @@ export class LanguageServerPlugin implements PluginValue {
             },
         });
         this.documentOpened = true;
+        // If the view was torn down while didOpen was in flight, destroy() saw
+        // documentOpened === false and could not close. Balance the open here
+        // so we neither leak the server-side document nor the open ref-count.
+        if (this.destroyed) {
+            this.closeDocument();
+        }
     }
 
     /**
@@ -316,6 +355,13 @@ export class LanguageServerPlugin implements PluginValue {
             return;
         }
 
+        // The save must observe all preceding document updates, otherwise the
+        // server may run the save against stale content.
+        await Promise.all(this.pendingDocumentChanges);
+        if (this.destroyed || !this.client.ready) {
+            return;
+        }
+
         const sync = this.client.capabilities?.textDocumentSync;
         // Save-related sub-capabilities only exist on the object form; a plain
         // sync-kind number carries no save information.
@@ -331,6 +377,9 @@ export class LanguageServerPlugin implements PluginValue {
             } catch (error) {
                 console.error("Failed to send willSave", error);
             }
+            if (this.destroyed || !this.client.ready) {
+                return;
+            }
         }
 
         if (syncOptions?.willSaveWaitUntil) {
@@ -341,9 +390,15 @@ export class LanguageServerPlugin implements PluginValue {
                 });
                 if (edits && edits.length > 0 && !this.destroyed) {
                     this.applyEdits(this.view, edits);
+                    // The applied edits queue their own didChange; make sure
+                    // the server sees them before we announce didSave.
+                    await Promise.all(this.pendingDocumentChanges);
                 }
             } catch (error) {
                 console.error("Failed during willSaveWaitUntil", error);
+            }
+            if (this.destroyed || !this.client.ready) {
+                return;
             }
         }
 

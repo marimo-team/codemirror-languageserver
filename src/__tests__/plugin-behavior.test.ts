@@ -148,6 +148,34 @@ describe("destroy lifecycle", () => {
         expect(client.textDocumentDidClose).not.toHaveBeenCalled();
     });
 
+    it("closes the document if destroyed while didOpen is in flight", async () => {
+        let resolveOpen: () => void = () => {};
+        const client = createFakeClient();
+        (
+            client.textDocumentDidOpen as ReturnType<typeof vi.fn>
+        ).mockReturnValue(
+            new Promise<void>((resolve) => {
+                resolveOpen = resolve;
+            }),
+        );
+        const view = createView("hello");
+        const plugin = createPlugin(view, client);
+        // Let initialize get past initializePromise and issue didOpen, which is
+        // still pending.
+        await flushTicks();
+
+        // Tear down while didOpen has not resolved yet.
+        plugin.destroy();
+        // didOpen resolves after destroy; the plugin must still close.
+        resolveOpen();
+        await flushTicks();
+
+        expect(client.textDocumentDidOpen).toHaveBeenCalled();
+        expect(client.textDocumentDidClose).toHaveBeenCalledWith({
+            textDocument: { uri: "file:///test.ts" },
+        });
+    });
+
     it("does not dispatch diagnostics after destroy", async () => {
         const client = createFakeClient();
         const view = createView("hello");
@@ -206,7 +234,10 @@ describe("documentDidSave", () => {
             textDocument: { uri: "file:///test.ts" },
             reason: 1,
         });
-        expect(client.textDocumentWillSaveWaitUntil).toHaveBeenCalled();
+        expect(client.textDocumentWillSaveWaitUntil).toHaveBeenCalledWith({
+            textDocument: { uri: "file:///test.ts" },
+            reason: 1,
+        });
         // The willSaveWaitUntil edit was applied before didSave
         expect(view.state.doc.toString()).toBe("hello!");
         // includeText is set, so didSave carries the post-edit text
@@ -228,6 +259,37 @@ describe("documentDidSave", () => {
 
         expect(client.textDocumentWillSave).not.toHaveBeenCalled();
         expect(client.textDocumentWillSaveWaitUntil).not.toHaveBeenCalled();
+        expect(client.textDocumentDidSave).not.toHaveBeenCalled();
+    });
+
+    it("does not send didSave when destroyed mid-handshake", async () => {
+        let resolveWillSave: () => void = () => {};
+        const client = createFakeClient({
+            capabilities: {
+                textDocumentSync: { willSave: true, save: true },
+            },
+        });
+        (
+            client.textDocumentWillSave as ReturnType<typeof vi.fn>
+        ).mockReturnValue(
+            new Promise<void>((resolve) => {
+                resolveWillSave = resolve;
+            }),
+        );
+        const view = createView("hello");
+        const plugin = createPlugin(view, client);
+        await flushTicks();
+
+        const savePromise = plugin.documentDidSave();
+        // Let the handshake reach willSave (now in flight) before tearing down.
+        await flushTicks();
+        expect(client.textDocumentWillSave).toHaveBeenCalled();
+
+        plugin.destroy();
+        resolveWillSave();
+        await savePromise;
+
+        // The post-willSave lifecycle guard must stop the handshake here.
         expect(client.textDocumentDidSave).not.toHaveBeenCalled();
     });
 

@@ -1,5 +1,6 @@
 export {
     LanguageServerPlugin,
+    getLanguageServerPlugin,
     languageServerWithClient,
     languageServer,
     signatureHelpTooltipField,
