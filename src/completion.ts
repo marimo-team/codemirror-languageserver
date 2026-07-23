@@ -182,6 +182,9 @@ function applyLazyAdditionalTextEdits(opts: {
 }): void {
     const { view, originalDoc, mainFrom, mainTo, insertedLength, resolveItem } =
         opts;
+    // Snapshot to detect edits racing the resolve round-trip (Text is
+    // immutable, so identity means unchanged)
+    const docAfterMainEdit = view.state.doc;
     const mapPos = mapThroughReplacement(mainFrom, mainTo, insertedLength);
     resolveItem()
         .then((resolved) => {
@@ -189,18 +192,21 @@ function applyLazyAdditionalTextEdits(opts: {
             if (!edits?.length) {
                 return;
             }
+            // The mapped offsets are only valid against the document as the
+            // main edit left it; drop the edits if the user typed since
+            if (view.state.doc !== docAfterMainEdit) {
+                return;
+            }
             const changes = convertAdditionalTextEdits(
                 originalDoc,
                 edits,
                 mainFrom,
                 mainTo,
-            )
-                .map((change) => ({
-                    ...change,
-                    from: mapPos(change.from),
-                    to: mapPos(change.to),
-                }))
-                .filter((change) => change.to <= view.state.doc.length);
+            ).map((change) => ({
+                ...change,
+                from: mapPos(change.from),
+                to: mapPos(change.to),
+            }));
             if (changes.length === 0) {
                 return;
             }
@@ -335,6 +341,7 @@ export function convertCompletionItem(
         additionalTextEdits,
         insertTextFormat,
         commitCharacters,
+        filterText,
     } = item;
 
     // Resolve at most once; shared by the info panel and apply
@@ -445,6 +452,13 @@ export function convertCompletionItem(
         },
         type: kind ? CompletionItemKindMap[kind]?.toLowerCase() : undefined,
     };
+
+    // CodeMirror matches typed input against `label`, but LSP defines
+    // matching against `filterText`; keep the LSP label for display
+    if (filterText != null && filterText !== label) {
+        completion.label = filterText;
+        completion.displayLabel = label;
+    }
 
     if (commitCharacters?.length) {
         completion.commitCharacters = commitCharacters;

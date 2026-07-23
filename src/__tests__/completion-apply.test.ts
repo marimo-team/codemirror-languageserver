@@ -474,3 +474,44 @@ describe("convertCompletionItem lazy additionalTextEdits", () => {
         expect(view.state.doc.toString()).toBe("foobar x");
     });
 });
+
+describe("convertCompletionItem lazy edits racing user input", () => {
+    it("drops resolve-provided edits when the document changed during resolve", async () => {
+        const view = createView("f x");
+        const item: LSP.CompletionItem = {
+            label: "foobar",
+            insertText: "foobar",
+        };
+        let resolveNow: (value: LSP.CompletionItem) => void = () => {};
+        const resolveItem = vi.fn().mockReturnValue(
+            new Promise<LSP.CompletionItem>((resolve) => {
+                resolveNow = resolve;
+            }),
+        );
+        const completion = convertCompletionItem(item, {
+            ...defaultOptions,
+            hasResolveProvider: true,
+            resolveItem,
+        });
+        // biome-ignore lint/suspicious/noExplicitAny: test invokes apply directly
+        (completion.apply as any)(view, completion, 0, 1);
+        expect(view.state.doc.toString()).toBe("foobar x");
+
+        // User keeps typing before the resolve response arrives
+        view.dispatch({ changes: { from: 6, to: 6, insert: "!" } });
+        resolveNow({
+            ...item,
+            additionalTextEdits: [
+                {
+                    range: {
+                        start: { line: 0, character: 2 },
+                        end: { line: 0, character: 3 },
+                    },
+                    newText: "imported",
+                },
+            ],
+        });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(view.state.doc.toString()).toBe("foobar! x");
+    });
+});

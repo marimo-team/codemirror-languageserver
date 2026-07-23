@@ -829,3 +829,34 @@ describe("isDeprecatedItem / completionOptionClass", () => {
         expect(completionOptionClass({ label: "a" })).toBe("");
     });
 });
+
+describe("filterText mapping", () => {
+    const defaultOptions = {
+        allowHTMLContent: false,
+        useSnippetOnCompletion: false,
+        hasResolveProvider: false,
+        resolveItem: vi.fn(),
+    };
+
+    it("matches against filterText and displays the LSP label", () => {
+        const completion = convertCompletionItem(
+            { label: "• foo", filterText: "foo" },
+            defaultOptions,
+        );
+        expect(completion.label).toBe("foo");
+        expect(completion.displayLabel).toBe("• foo");
+    });
+
+    it("leaves the label alone when filterText is absent or identical", () => {
+        expect(
+            convertCompletionItem({ label: "foo" }, defaultOptions)
+                .displayLabel,
+        ).toBeUndefined();
+        expect(
+            convertCompletionItem(
+                { label: "foo", filterText: "foo" },
+                defaultOptions,
+            ).displayLabel,
+        ).toBeUndefined();
+    });
+});
