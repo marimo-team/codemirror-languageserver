@@ -308,14 +308,14 @@ describe("LanguageServerClient", () => {
             });
 
             expect(caps.textDocument.synchronization).toEqual({
-                dynamicRegistration: true,
+                dynamicRegistration: false,
                 willSave: true,
                 didSave: true,
                 willSaveWaitUntil: true,
             });
 
             expect(caps.textDocument.completion).toEqual({
-                dynamicRegistration: true,
+                dynamicRegistration: false,
                 completionItem: {
                     snippetSupport: true,
                     commitCharactersSupport: true,
@@ -348,7 +348,7 @@ describe("LanguageServerClient", () => {
             });
 
             expect(caps.textDocument.signatureHelp).toEqual({
-                dynamicRegistration: true,
+                dynamicRegistration: false,
                 signatureInformation: {
                     documentationFormat: ["markdown", "plaintext"],
                 },
@@ -366,7 +366,7 @@ describe("LanguageServerClient", () => {
 
             // Test workspace capabilities
             expect(caps.workspace.didChangeConfiguration).toEqual({
-                dynamicRegistration: true,
+                dynamicRegistration: false,
             });
         });
     });

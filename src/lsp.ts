@@ -1,14 +1,14 @@
 import type { autocompletion } from "@codemirror/autocomplete";
 import type { hoverTooltip } from "@codemirror/view";
-import {
-    Client,
-    RequestManager,
-    type WebSocketTransport,
-} from "@open-rpc/client-js";
+import { Client, RequestManager } from "@open-rpc/client-js";
 import type { Transport } from "@open-rpc/client-js/build/transports/Transport.js";
 import type * as LSP from "vscode-languageserver-protocol";
 
 const TIMEOUT = 10000;
+
+// JSON-RPC error codes (https://www.jsonrpc.org/specification#error_object)
+const METHOD_NOT_FOUND = -32601;
+const INTERNAL_ERROR = -32603;
 
 // Client to server then server to client
 export interface LSPRequestMap {
@@ -65,6 +65,90 @@ export type Notification = {
         params: LSPEventMap[key];
     };
 }[keyof LSPEventMap];
+
+/**
+ * Handler for a request initiated by the server (e.g.
+ * `workspace/configuration`, `window/showMessageRequest`). The resolved value
+ * is sent back to the server as the JSON-RPC result; a thrown error is sent
+ * back as a JSON-RPC error response.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: handlers are registered per-method with heterogeneous shapes
+export type ServerRequestHandler<P = any, R = any> = (
+    params: P,
+) => Promise<R> | R;
+
+/** An incoming server->client JSON-RPC request frame */
+interface ServerRequest {
+    jsonrpc: "2.0";
+    id: number | string;
+    method: string;
+    params?: unknown;
+}
+
+interface JsonRpcResponse {
+    jsonrpc: "2.0";
+    id: number | string;
+    result?: unknown;
+    error?: { code: number; message: string };
+}
+
+function isServerRequest(frame: unknown): frame is ServerRequest {
+    if (frame == null || typeof frame !== "object" || Array.isArray(frame)) {
+        return false;
+    }
+    const candidate = frame as Partial<ServerRequest>;
+    // A JSON-RPC id of 0 is valid, so check for presence, not truthiness;
+    // frames with a method but no id are notifications, not requests
+    return (
+        typeof candidate.method === "string" &&
+        candidate.id !== undefined &&
+        candidate.id !== null
+    );
+}
+
+/**
+ * Every @open-rpc/client-js transport funnels each incoming frame through its
+ * TransportRequestManager, which silently drops server->client requests (and
+ * can even mistake them for responses to in-flight client requests when ids
+ * collide). The manager is the only transport-agnostic seam, so we access it
+ * through this narrowed shape.
+ */
+interface InterceptableTransport {
+    transportRequestManager?: {
+        resolveResponse(payload: string, emitError?: boolean): unknown;
+    };
+}
+
+/**
+ * Maps client->server request methods to the static server capability that
+ * announces support for them, for {@link LanguageServerClient.hasCapability}.
+ */
+const METHOD_TO_STATIC_CAPABILITY: Partial<
+    Record<string, keyof LSP.ServerCapabilities>
+> = {
+    "textDocument/hover": "hoverProvider",
+    "textDocument/completion": "completionProvider",
+    "textDocument/definition": "definitionProvider",
+    "textDocument/declaration": "declarationProvider",
+    "textDocument/typeDefinition": "typeDefinitionProvider",
+    "textDocument/implementation": "implementationProvider",
+    "textDocument/references": "referencesProvider",
+    "textDocument/documentHighlight": "documentHighlightProvider",
+    "textDocument/documentSymbol": "documentSymbolProvider",
+    "textDocument/codeAction": "codeActionProvider",
+    "textDocument/codeLens": "codeLensProvider",
+    "textDocument/documentLink": "documentLinkProvider",
+    "textDocument/formatting": "documentFormattingProvider",
+    "textDocument/rangeFormatting": "documentRangeFormattingProvider",
+    "textDocument/onTypeFormatting": "documentOnTypeFormattingProvider",
+    "textDocument/rename": "renameProvider",
+    "textDocument/prepareRename": "renameProvider",
+    "textDocument/signatureHelp": "signatureHelpProvider",
+    "textDocument/foldingRange": "foldingRangeProvider",
+    "textDocument/selectionRange": "selectionRangeProvider",
+    "workspace/symbol": "workspaceSymbolProvider",
+    "workspace/executeCommand": "executeCommandProvider",
+};
 
 /**
  * Options for configuring the language server client
@@ -229,8 +313,16 @@ export class LanguageServerClient {
      * URI from multiple views is not fully synchronized.
      */
     private documentOpenCounts = new Map<string, number>();
-    private webSocketConnection?: WebSocketTransport["connection"];
-    private webSocketMessageHandler?: (message: { data: unknown }) => void;
+    private serverRequestHandlers = new Map<string, ServerRequestHandler>();
+    /**
+     * Capabilities the server registered dynamically via
+     * `client/registerCapability`, keyed by registration id. Consult
+     * {@link hasCapability} to check method support regardless of whether the
+     * server announced it statically or dynamically.
+     */
+    public dynamicCapabilities = new Map<string, LSP.Registration>();
+    private detachServerRequestInterceptor?: () => void;
+    private serverResponseCount = 0;
     private isClosed = false;
 
     constructor({
@@ -257,56 +349,63 @@ export class LanguageServerClient {
             this.processNotification(data as Notification);
         });
 
-        const webSocketTransport = this.transport as WebSocketTransport;
-        if (webSocketTransport?.connection) {
-            this.webSocketConnection = webSocketTransport.connection;
-            this.webSocketMessageHandler = (message: { data: unknown }) => {
-                if (typeof message.data !== "string") {
-                    return;
+        this.detachServerRequestInterceptor =
+            this.attachServerRequestInterceptor(this.transport);
+
+        this.onRequest(
+            "workspace/configuration",
+            (params: LSP.ConfigurationParams) => {
+                if (getWorkspaceConfiguration) {
+                    return getWorkspaceConfiguration(params);
                 }
-                // biome-ignore lint/suspicious/noExplicitAny: raw JSON-RPC frame
-                let data: any;
-                try {
-                    data = JSON.parse(message.data);
-                } catch {
-                    // Ignore non-JSON frames (e.g. keepalive pings)
-                    return;
+                // Per spec the result must have one entry per requested item
+                return (params?.items ?? []).map(() => null);
+            },
+        );
+        this.onRequest(
+            "client/registerCapability",
+            (params: LSP.RegistrationParams) => {
+                for (const registration of params?.registrations ?? []) {
+                    this.dynamicCapabilities.set(registration.id, registration);
                 }
-                if (data == null || typeof data !== "object") {
-                    return;
+                return null;
+            },
+        );
+        this.onRequest(
+            "client/unregisterCapability",
+            (params: LSP.UnregistrationParams) => {
+                // "unregisterations" is a spelling mistake baked into the LSP spec
+                for (const unregistration of params?.unregisterations ?? []) {
+                    this.dynamicCapabilities.delete(unregistration.id);
                 }
-                // A JSON-RPC id of 0 is valid, so check for presence, not truthiness
-                const isRequest = data.id !== undefined && data.id !== null;
-                if (
-                    data.method === "workspace/configuration" &&
-                    isRequest &&
-                    getWorkspaceConfiguration
-                ) {
-                    webSocketTransport.connection.send(
-                        JSON.stringify({
-                            jsonrpc: "2.0",
-                            id: data.id,
-                            result: getWorkspaceConfiguration(data.params),
-                        }),
-                    );
-                    // XXX(hjr265): Need a better way to do this. Relevant issue:
-                    // https://github.com/FurqanSoftware/codemirror-languageserver/issues/9
-                } else if (data.method && isRequest) {
-                    webSocketTransport.connection.send(
-                        JSON.stringify({
-                            jsonrpc: "2.0",
-                            id: data.id,
-                            result: null,
-                        }),
-                    );
+                return null;
+            },
+        );
+        // Minimal spec-valid answers for requests the client cannot fully
+        // honor yet; hosts can override these via onRequest. Truthfully
+        // reporting "not applied" / "no action selected" beats a
+        // MethodNotFound error, which some servers treat as a hard failure.
+        this.onRequest(
+            "workspace/applyEdit",
+            (): LSP.ApplyWorkspaceEditResult => ({
+                applied: false,
+                failureReason: "workspace/applyEdit is not supported",
+            }),
+        );
+        this.onRequest(
+            "window/showMessageRequest",
+            (params: LSP.ShowMessageRequestParams) => {
+                // No UI for message requests; surface the message in the
+                // console and answer null ("no action selected")
+                if (params?.message) {
+                    console.info(`Language server: ${params.message}`);
                 }
-            };
-            webSocketTransport.connection.addEventListener(
-                "message",
-                // @ts-ignore
-                this.webSocketMessageHandler,
-            );
-        }
+                return null;
+            },
+        );
+        // Acknowledge progress-token creation; the progress notifications
+        // that follow are ignored
+        this.onRequest("window/workDoneProgress/create", () => null);
 
         this.initializePromise = this.initialize();
         // Keep a failed initialize from becoming an unhandled rejection;
@@ -317,6 +416,11 @@ export class LanguageServerClient {
     }
 
     protected getInitializationOptions(): LSP.InitializeParams["initializationOptions"] {
+        // dynamicRegistration is only advertised for features whose support
+        // checks go through hasCapability() and whose registrations carry no
+        // options the client would otherwise ignore. Everything else stays
+        // false so servers announce those capabilities statically instead of
+        // registering behavior we cannot honor.
         const defaultClientCapabilities: LSP.ClientCapabilities = {
             textDocument: {
                 hover: {
@@ -325,7 +429,7 @@ export class LanguageServerClient {
                 },
                 moniker: {},
                 synchronization: {
-                    dynamicRegistration: true,
+                    dynamicRegistration: false,
                     willSave: true,
                     didSave: true,
                     willSaveWaitUntil: true,
@@ -351,7 +455,10 @@ export class LanguageServerClient {
                     },
                 },
                 completion: {
-                    dynamicRegistration: true,
+                    // Dynamic completion registrations carry triggerCharacters
+                    // and resolveProvider options that are still read from the
+                    // static capability only
+                    dynamicRegistration: false,
                     completionItem: {
                         snippetSupport: true,
                         commitCharactersSupport: true,
@@ -362,13 +469,15 @@ export class LanguageServerClient {
                     contextSupport: false,
                 },
                 signatureHelp: {
-                    dynamicRegistration: true,
+                    // Same as completion: triggerCharacters come from the
+                    // static capability only
+                    dynamicRegistration: false,
                     signatureInformation: {
                         documentationFormat: ["markdown", "plaintext"],
                     },
                 },
                 declaration: {
-                    dynamicRegistration: true,
+                    dynamicRegistration: false,
                     linkSupport: true,
                 },
                 definition: {
@@ -376,11 +485,11 @@ export class LanguageServerClient {
                     linkSupport: true,
                 },
                 typeDefinition: {
-                    dynamicRegistration: true,
+                    dynamicRegistration: false,
                     linkSupport: true,
                 },
                 implementation: {
-                    dynamicRegistration: true,
+                    dynamicRegistration: false,
                     linkSupport: true,
                 },
                 rename: {
@@ -390,7 +499,7 @@ export class LanguageServerClient {
             },
             workspace: {
                 didChangeConfiguration: {
-                    dynamicRegistration: true,
+                    dynamicRegistration: false,
                 },
             },
         };
@@ -430,16 +539,143 @@ export class LanguageServerClient {
         this.isClosed = true;
         this.ready = false;
         this.notificationListeners.clear();
-        if (this.webSocketConnection && this.webSocketMessageHandler) {
-            this.webSocketConnection.removeEventListener(
-                "message",
-                // @ts-ignore
-                this.webSocketMessageHandler,
-            );
-            this.webSocketConnection = undefined;
-            this.webSocketMessageHandler = undefined;
-        }
+        this.serverRequestHandlers.clear();
+        this.dynamicCapabilities.clear();
+        this.detachServerRequestInterceptor?.();
+        this.detachServerRequestInterceptor = undefined;
         this.client.close();
+    }
+
+    /**
+     * Registers a handler for a request initiated by the server. The handler's
+     * resolved value is sent back as the JSON-RPC result; a thrown error
+     * becomes a JSON-RPC error response. Requests with no registered handler
+     * are answered with a `MethodNotFound` (-32601) error so servers can fall
+     * back gracefully.
+     *
+     * @returns A function that removes the handler.
+     */
+    public onRequest(
+        method: string,
+        handler: ServerRequestHandler,
+    ): () => void {
+        this.serverRequestHandlers.set(method, handler);
+        return () => {
+            // Don't remove a newer handler registered for the same method
+            if (this.serverRequestHandlers.get(method) === handler) {
+                this.serverRequestHandlers.delete(method);
+            }
+        };
+    }
+
+    /**
+     * Whether the server supports the given client->server method, counting
+     * both statically announced capabilities and capabilities the server
+     * registered dynamically via `client/registerCapability`.
+     */
+    public hasCapability(method: string): boolean {
+        for (const registration of this.dynamicCapabilities.values()) {
+            if (registration.method === method) {
+                return true;
+            }
+        }
+        const capability = METHOD_TO_STATIC_CAPABILITY[method];
+        if (!capability) {
+            return false;
+        }
+        return Boolean(this.capabilities?.[capability]);
+    }
+
+    /**
+     * Patches the transport's TransportRequestManager so server->client
+     * requests are dispatched to {@link serverRequestHandlers} instead of
+     * being silently dropped (or, worse, matched against a pending client
+     * request with a colliding id). Responses and notifications still flow
+     * through the original code path untouched.
+     */
+    private attachServerRequestInterceptor(
+        transport: Transport,
+    ): (() => void) | undefined {
+        const manager = (transport as unknown as InterceptableTransport)
+            .transportRequestManager;
+        if (!manager || typeof manager.resolveResponse !== "function") {
+            return undefined;
+        }
+        const original = manager.resolveResponse.bind(manager);
+        manager.resolveResponse = (payload: string, emitError?: boolean) => {
+            if (typeof payload === "string") {
+                let frame: unknown;
+                try {
+                    frame = JSON.parse(payload);
+                } catch {
+                    frame = undefined;
+                }
+                if (isServerRequest(frame)) {
+                    void this.handleServerRequest(frame);
+                    return undefined;
+                }
+            }
+            return original(payload, emitError);
+        };
+        return () => {
+            manager.resolveResponse = original;
+        };
+    }
+
+    private async handleServerRequest(request: ServerRequest): Promise<void> {
+        const handler = this.serverRequestHandlers.get(request.method);
+        let response: JsonRpcResponse;
+        if (!handler) {
+            response = {
+                jsonrpc: "2.0",
+                id: request.id,
+                error: {
+                    code: METHOD_NOT_FOUND,
+                    message: `Method not found: ${request.method}`,
+                },
+            };
+        } else {
+            try {
+                const result = await handler(request.params);
+                response = {
+                    jsonrpc: "2.0",
+                    id: request.id,
+                    // JSON.stringify drops `result: undefined`, which would
+                    // produce a spec-invalid response; send an explicit null
+                    result: result === undefined ? null : result,
+                };
+            } catch (error) {
+                response = {
+                    jsonrpc: "2.0",
+                    id: request.id,
+                    error: {
+                        code: INTERNAL_ERROR,
+                        message:
+                            error instanceof Error
+                                ? error.message
+                                : String(error),
+                    },
+                };
+            }
+        }
+        if (this.isClosed) {
+            return;
+        }
+        // sendData wraps outgoing payloads in {internalID, request} and sends
+        // `request` verbatim, so a raw response object rides through any
+        // transport. Because the response carries an id, the transport tracks
+        // it as if it were a request awaiting an answer that never comes; the
+        // timeout cleans up that entry and the rejection is expected.
+        const internalID = `codemirror-languageserver:server-reply:${this.serverResponseCount++}`;
+        try {
+            await this.transport.sendData(
+                // biome-ignore lint/suspicious/noExplicitAny: a response frame is not part of JSONRPCRequestData
+                { internalID, request: response as any },
+                this.timeout,
+            );
+        } catch {
+            // Expected: responses get no acknowledgement
+        }
     }
 
     public textDocumentDidOpen(params: LSP.DidOpenTextDocumentParams) {

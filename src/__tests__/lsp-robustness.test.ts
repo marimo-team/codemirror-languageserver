@@ -25,26 +25,16 @@ vi.mock("@open-rpc/client-js", () => ({
     RequestManager: vi.fn(),
 }));
 
-interface FakeConnection {
-    handlers: Record<string, (message: { data: unknown }) => void>;
-    addEventListener: ReturnType<typeof vi.fn>;
-    removeEventListener: ReturnType<typeof vi.fn>;
-    send: ReturnType<typeof vi.fn>;
-}
-
-function createFakeWebSocketTransport() {
-    const connection: FakeConnection = {
-        handlers: {},
-        addEventListener: vi.fn((event: string, handler) => {
-            connection.handlers[event] = handler;
-        }),
-        removeEventListener: vi.fn((event: string) => {
-            delete connection.handlers[event];
-        }),
-        send: vi.fn(),
-    };
+function createFakeTransport() {
+    // Stands in for the TransportRequestManager every @open-rpc/client-js
+    // transport routes incoming frames through; the client patches
+    // resolveResponse to intercept server->client requests.
+    const originalResolveResponse = vi.fn();
     return {
-        connection,
+        transportRequestManager: {
+            resolveResponse: originalResolveResponse,
+        },
+        originalResolveResponse,
         sendData: vi.fn().mockResolvedValue({}),
         subscribe: vi.fn(),
         unsubscribe: vi.fn(),
@@ -54,7 +44,23 @@ function createFakeWebSocketTransport() {
     } as any;
 }
 
-function baseOptions(transport = createFakeWebSocketTransport()) {
+/** Simulates an incoming frame arriving on the transport */
+// biome-ignore lint/suspicious/noExplicitAny: test helper
+function receiveFrame(transport: any, frame: unknown) {
+    transport.transportRequestManager.resolveResponse(
+        typeof frame === "string" ? frame : JSON.stringify(frame),
+    );
+}
+
+// biome-ignore lint/suspicious/noExplicitAny: inspecting mock args
+function sentResponses(transport: any) {
+    return transport.sendData.mock.calls.map(
+        // biome-ignore lint/suspicious/noExplicitAny: inspecting mock args
+        (call: any[]) => call[0].request,
+    );
+}
+
+function baseOptions(transport = createFakeTransport()) {
     return {
         rootUri: "file:///test",
         workspaceFolders: null,
@@ -102,82 +108,281 @@ describe("initialize failure handling", () => {
     });
 });
 
-describe("WebSocket message handling", () => {
-    it("responds to server requests with id 0", async () => {
-        const transport = createFakeWebSocketTransport();
+describe("server request handling", () => {
+    it("answers unhandled requests with MethodNotFound and a matching id (including id 0)", async () => {
+        const transport = createFakeTransport();
         new LanguageServerClient(baseOptions(transport));
-        const handler = transport.connection.handlers.message;
-        expect(handler).toBeDefined();
 
-        handler({
-            data: JSON.stringify({
+        receiveFrame(transport, {
+            jsonrpc: "2.0",
+            id: 0,
+            method: "workspace/unknownMethod",
+            params: {},
+        });
+        await flushTicks();
+
+        expect(sentResponses(transport)).toEqual([
+            {
                 jsonrpc: "2.0",
                 id: 0,
-                method: "client/registerCapability",
-                params: {},
-            }),
-        });
-
-        expect(transport.connection.send).toHaveBeenCalledWith(
-            JSON.stringify({ jsonrpc: "2.0", id: 0, result: null }),
-        );
+                error: {
+                    code: -32601,
+                    message: "Method not found: workspace/unknownMethod",
+                },
+            },
+        ]);
+        // The request must not leak into the response/notification path
+        expect(transport.originalResolveResponse).not.toHaveBeenCalled();
     });
 
-    it("ignores non-JSON frames without throwing", () => {
-        const transport = createFakeWebSocketTransport();
+    it("answers workspace/applyEdit and window requests with spec-valid no-op results", async () => {
+        const transport = createFakeTransport();
         new LanguageServerClient(baseOptions(transport));
-        const handler = transport.connection.handlers.message;
 
-        expect(() => handler({ data: "ping" })).not.toThrow();
-        expect(() => handler({ data: new Blob(["binary"]) })).not.toThrow();
-        expect(transport.connection.send).not.toHaveBeenCalled();
+        receiveFrame(transport, {
+            jsonrpc: "2.0",
+            id: 1,
+            method: "workspace/applyEdit",
+            params: { edit: { changes: {} } },
+        });
+        receiveFrame(transport, {
+            jsonrpc: "2.0",
+            id: 2,
+            method: "window/showMessageRequest",
+            params: { type: 1, message: "pick one", actions: [] },
+        });
+        receiveFrame(transport, {
+            jsonrpc: "2.0",
+            id: 3,
+            method: "window/workDoneProgress/create",
+            params: { token: "t" },
+        });
+        await flushTicks();
+
+        expect(sentResponses(transport)).toEqual([
+            {
+                jsonrpc: "2.0",
+                id: 1,
+                result: {
+                    applied: false,
+                    failureReason: "workspace/applyEdit is not supported",
+                },
+            },
+            { jsonrpc: "2.0", id: 2, result: null },
+            { jsonrpc: "2.0", id: 3, result: null },
+        ]);
     });
 
-    it("answers workspace/configuration requests (including id 0)", () => {
-        const transport = createFakeWebSocketTransport();
+    it("answers workspace/configuration requests via getWorkspaceConfiguration", async () => {
+        const transport = createFakeTransport();
         const getWorkspaceConfiguration = vi.fn().mockReturnValue([{ a: 1 }]);
         new LanguageServerClient({
             ...baseOptions(transport),
             getWorkspaceConfiguration,
         });
-        const handler = transport.connection.handlers.message;
 
-        handler({
-            data: JSON.stringify({
-                jsonrpc: "2.0",
-                id: 0,
-                method: "workspace/configuration",
-                params: { items: [] },
-            }),
+        receiveFrame(transport, {
+            jsonrpc: "2.0",
+            id: 0,
+            method: "workspace/configuration",
+            params: { items: [] },
         });
+        await flushTicks();
 
         expect(getWorkspaceConfiguration).toHaveBeenCalledWith({ items: [] });
-        expect(transport.connection.send).toHaveBeenCalledWith(
-            JSON.stringify({ jsonrpc: "2.0", id: 0, result: [{ a: 1 }] }),
-        );
+        expect(sentResponses(transport)).toEqual([
+            { jsonrpc: "2.0", id: 0, result: [{ a: 1 }] },
+        ]);
     });
 
-    it("does not reply to notifications (no id)", () => {
-        const transport = createFakeWebSocketTransport();
+    it("answers workspace/configuration with one null per item when no option is provided", async () => {
+        const transport = createFakeTransport();
         new LanguageServerClient(baseOptions(transport));
-        const handler = transport.connection.handlers.message;
 
-        handler({
-            data: JSON.stringify({
+        receiveFrame(transport, {
+            jsonrpc: "2.0",
+            id: 7,
+            method: "workspace/configuration",
+            params: { items: [{ section: "a" }, { section: "b" }] },
+        });
+        await flushTicks();
+
+        expect(sentResponses(transport)).toEqual([
+            { jsonrpc: "2.0", id: 7, result: [null, null] },
+        ]);
+    });
+
+    it("dispatches to onRequest handlers and unsubscribes them", async () => {
+        const transport = createFakeTransport();
+        const client = new LanguageServerClient(baseOptions(transport));
+        const handler = vi.fn().mockResolvedValue({ ok: true });
+        const dispose = client.onRequest("custom/method", handler);
+
+        receiveFrame(transport, {
+            jsonrpc: "2.0",
+            id: 1,
+            method: "custom/method",
+            params: { x: 1 },
+        });
+        await flushTicks();
+
+        expect(handler).toHaveBeenCalledWith({ x: 1 });
+        expect(sentResponses(transport)).toEqual([
+            { jsonrpc: "2.0", id: 1, result: { ok: true } },
+        ]);
+
+        dispose();
+        receiveFrame(transport, {
+            jsonrpc: "2.0",
+            id: 2,
+            method: "custom/method",
+            params: {},
+        });
+        await flushTicks();
+
+        expect(handler).toHaveBeenCalledTimes(1);
+        expect(sentResponses(transport)[1]).toEqual({
+            jsonrpc: "2.0",
+            id: 2,
+            error: {
+                code: -32601,
+                message: "Method not found: custom/method",
+            },
+        });
+    });
+
+    it("replies with an internal error when a handler throws, and stays usable", async () => {
+        const transport = createFakeTransport();
+        const client = new LanguageServerClient(baseOptions(transport));
+        client.onRequest("custom/fails", () => {
+            throw new Error("boom");
+        });
+        client.onRequest("custom/works", () => "fine");
+
+        receiveFrame(transport, {
+            jsonrpc: "2.0",
+            id: 1,
+            method: "custom/fails",
+            params: {},
+        });
+        receiveFrame(transport, {
+            jsonrpc: "2.0",
+            id: 2,
+            method: "custom/works",
+            params: {},
+        });
+        await flushTicks();
+
+        expect(sentResponses(transport)).toEqual([
+            {
                 jsonrpc: "2.0",
-                method: "window/logMessage",
-                params: {},
-            }),
+                id: 1,
+                error: { code: -32603, message: "boom" },
+            },
+            { jsonrpc: "2.0", id: 2, result: "fine" },
+        ]);
+    });
+
+    it("coerces a handler's undefined result to null", async () => {
+        const transport = createFakeTransport();
+        const client = new LanguageServerClient(baseOptions(transport));
+        client.onRequest("custom/void", () => undefined);
+
+        receiveFrame(transport, {
+            jsonrpc: "2.0",
+            id: 3,
+            method: "custom/void",
+            params: {},
+        });
+        await flushTicks();
+
+        expect(sentResponses(transport)).toEqual([
+            { jsonrpc: "2.0", id: 3, result: null },
+        ]);
+    });
+
+    it("forwards non-JSON frames, notifications, and responses untouched", async () => {
+        const transport = createFakeTransport();
+        new LanguageServerClient(baseOptions(transport));
+
+        const notification = JSON.stringify({
+            jsonrpc: "2.0",
+            method: "window/logMessage",
+            params: {},
+        });
+        const response = JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: { capabilities: {} },
         });
 
-        expect(transport.connection.send).not.toHaveBeenCalled();
+        receiveFrame(transport, "ping");
+        receiveFrame(transport, notification);
+        receiveFrame(transport, response);
+        await flushTicks();
+
+        expect(transport.sendData).not.toHaveBeenCalled();
+        expect(
+            transport.originalResolveResponse.mock.calls.map((c) => c[0]),
+        ).toEqual(["ping", notification, response]);
+    });
+
+    it("tracks dynamic capability (un)registration via hasCapability", async () => {
+        const transport = createFakeTransport();
+        const client = new LanguageServerClient(baseOptions(transport));
+
+        expect(client.hasCapability("textDocument/formatting")).toBe(false);
+
+        receiveFrame(transport, {
+            jsonrpc: "2.0",
+            id: 1,
+            method: "client/registerCapability",
+            params: {
+                registrations: [
+                    {
+                        id: "reg-1",
+                        method: "textDocument/formatting",
+                        registerOptions: {},
+                    },
+                ],
+            },
+        });
+        await flushTicks();
+
+        expect(client.hasCapability("textDocument/formatting")).toBe(true);
+        expect(sentResponses(transport)).toEqual([
+            { jsonrpc: "2.0", id: 1, result: null },
+        ]);
+
+        receiveFrame(transport, {
+            jsonrpc: "2.0",
+            id: 2,
+            method: "client/unregisterCapability",
+            params: {
+                unregisterations: [
+                    { id: "reg-1", method: "textDocument/formatting" },
+                ],
+            },
+        });
+        await flushTicks();
+
+        expect(client.hasCapability("textDocument/formatting")).toBe(false);
+        expect(sentResponses(transport)[1]).toEqual({
+            jsonrpc: "2.0",
+            id: 2,
+            result: null,
+        });
     });
 });
 
 describe("close()", () => {
-    it("marks the client not ready, clears listeners, and detaches the ws handler", async () => {
-        const transport = createFakeWebSocketTransport();
+    it("marks the client not ready, clears listeners, and detaches the request interceptor", async () => {
+        const transport = createFakeTransport();
         const client = new LanguageServerClient(baseOptions(transport));
+        // The constructor patches resolveResponse to intercept server requests
+        expect(transport.transportRequestManager.resolveResponse).not.toBe(
+            transport.originalResolveResponse,
+        );
         await flushTicks();
         expect(client.ready).toBe(true);
 
@@ -187,10 +392,15 @@ describe("close()", () => {
         client.close();
 
         expect(client.ready).toBe(false);
-        expect(transport.connection.removeEventListener).toHaveBeenCalledWith(
-            "message",
-            expect.any(Function),
-        );
+        // Server requests arriving after close are no longer answered
+        receiveFrame(transport, {
+            jsonrpc: "2.0",
+            id: 9,
+            method: "workspace/configuration",
+            params: { items: [] },
+        });
+        await flushTicks();
+        expect(transport.sendData).not.toHaveBeenCalled();
         // biome-ignore lint/suspicious/noExplicitAny: accessing protected member in test
         (client as any).processNotification({
             jsonrpc: "2.0",

@@ -3,7 +3,8 @@ import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type * as LSP from "vscode-languageserver-protocol";
-import type { FeatureOptions, LanguageServerClient } from "../lsp.js";
+import { LanguageServerClient } from "../lsp.js";
+import type { FeatureOptions } from "../lsp.js";
 import { LanguageServerPlugin, getLanguageServerPlugin } from "../plugin.js";
 
 const featureOptions: Required<FeatureOptions> = {
@@ -31,6 +32,8 @@ function createFakeClient(overrides: FakeClientOverrides = {}) {
             hoverProvider: true,
             renameProvider: true,
         },
+        dynamicCapabilities: new Map(),
+        hasCapability: LanguageServerClient.prototype.hasCapability,
         initializePromise: overrides.initializePromise ?? Promise.resolve(),
         onNotification: vi.fn().mockReturnValue(() => {}),
         textDocumentDidOpen: vi.fn().mockResolvedValue(undefined),
