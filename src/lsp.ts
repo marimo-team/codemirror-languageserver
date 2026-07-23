@@ -381,6 +381,31 @@ export class LanguageServerClient {
                 return null;
             },
         );
+        // Minimal spec-valid answers for requests the client cannot fully
+        // honor yet; hosts can override these via onRequest. Truthfully
+        // reporting "not applied" / "no action selected" beats a
+        // MethodNotFound error, which some servers treat as a hard failure.
+        this.onRequest(
+            "workspace/applyEdit",
+            (): LSP.ApplyWorkspaceEditResult => ({
+                applied: false,
+                failureReason: "workspace/applyEdit is not supported",
+            }),
+        );
+        this.onRequest(
+            "window/showMessageRequest",
+            (params: LSP.ShowMessageRequestParams) => {
+                // No UI for message requests; surface the message in the
+                // console and answer null ("no action selected")
+                if (params?.message) {
+                    console.info(`Language server: ${params.message}`);
+                }
+                return null;
+            },
+        );
+        // Acknowledge progress-token creation; the progress notifications
+        // that follow are ignored
+        this.onRequest("window/workDoneProgress/create", () => null);
 
         this.initializePromise = this.initialize();
         // Keep a failed initialize from becoming an unhandled rejection;

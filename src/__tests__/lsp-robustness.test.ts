@@ -116,7 +116,7 @@ describe("server request handling", () => {
         receiveFrame(transport, {
             jsonrpc: "2.0",
             id: 0,
-            method: "window/showMessageRequest",
+            method: "workspace/unknownMethod",
             params: {},
         });
         await flushTicks();
@@ -127,12 +127,50 @@ describe("server request handling", () => {
                 id: 0,
                 error: {
                     code: -32601,
-                    message: "Method not found: window/showMessageRequest",
+                    message: "Method not found: workspace/unknownMethod",
                 },
             },
         ]);
         // The request must not leak into the response/notification path
         expect(transport.originalResolveResponse).not.toHaveBeenCalled();
+    });
+
+    it("answers workspace/applyEdit and window requests with spec-valid no-op results", async () => {
+        const transport = createFakeTransport();
+        new LanguageServerClient(baseOptions(transport));
+
+        receiveFrame(transport, {
+            jsonrpc: "2.0",
+            id: 1,
+            method: "workspace/applyEdit",
+            params: { edit: { changes: {} } },
+        });
+        receiveFrame(transport, {
+            jsonrpc: "2.0",
+            id: 2,
+            method: "window/showMessageRequest",
+            params: { type: 1, message: "pick one", actions: [] },
+        });
+        receiveFrame(transport, {
+            jsonrpc: "2.0",
+            id: 3,
+            method: "window/workDoneProgress/create",
+            params: { token: "t" },
+        });
+        await flushTicks();
+
+        expect(sentResponses(transport)).toEqual([
+            {
+                jsonrpc: "2.0",
+                id: 1,
+                result: {
+                    applied: false,
+                    failureReason: "workspace/applyEdit is not supported",
+                },
+            },
+            { jsonrpc: "2.0", id: 2, result: null },
+            { jsonrpc: "2.0", id: 3, result: null },
+        ]);
     });
 
     it("answers workspace/configuration requests via getWorkspaceConfiguration", async () => {
