@@ -263,6 +263,14 @@ export interface LanguageServerOptions extends FeatureOptions {
     completionMatchBefore?: RegExp;
 
     /**
+     * When the server returns a complete (`isIncomplete: false`) completion
+     * list, let CodeMirror filter it client-side as the user types instead
+     * of re-querying the server on every keystroke.
+     * @default false
+     */
+    clientSideFiltering?: boolean;
+
+    /**
      * Whether to send incremental changes to the language server.
      * @default true
      */
@@ -463,8 +471,29 @@ export class LanguageServerClient {
                         snippetSupport: true,
                         commitCharactersSupport: true,
                         documentationFormat: ["markdown", "plaintext"],
-                        deprecatedSupport: false,
+                        deprecatedSupport: true,
                         preselectSupport: false,
+                        insertReplaceSupport: true,
+                        tagSupport: {
+                            // CompletionItemTag.Deprecated
+                            valueSet: [1],
+                        },
+                        resolveSupport: {
+                            properties: [
+                                "documentation",
+                                "detail",
+                                "additionalTextEdits",
+                            ],
+                        },
+                    },
+                    completionList: {
+                        itemDefaults: [
+                            "commitCharacters",
+                            "editRange",
+                            "insertTextFormat",
+                            "insertTextMode",
+                            "data",
+                        ],
                     },
                     contextSupport: false,
                 },

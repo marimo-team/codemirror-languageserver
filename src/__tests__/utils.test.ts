@@ -3,6 +3,8 @@ import type { EditorView } from "@codemirror/view";
 import { describe, expect, it, vi } from "vitest";
 import type * as LSP from "vscode-languageserver-protocol";
 import {
+    isCompletionList,
+    isInsertReplaceEdit,
     isLSPMarkupContent,
     isLSPTextEdit,
     prefixMatch,
@@ -46,6 +48,41 @@ describe("isLSPTextEdit", () => {
     it("should return false for object without range", () => {
         const invalidEdit = { newText: "test" };
         expect(isLSPTextEdit(invalidEdit as LSP.TextEdit)).toBe(false);
+    });
+});
+
+describe("isInsertReplaceEdit", () => {
+    const range: LSP.Range = {
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: 5 },
+    };
+
+    it("should return true for LSP.InsertReplaceEdit", () => {
+        expect(
+            isInsertReplaceEdit({
+                insert: range,
+                replace: range,
+                newText: "test",
+            }),
+        ).toBe(true);
+    });
+
+    it("should return false for a plain TextEdit", () => {
+        expect(isInsertReplaceEdit({ range, newText: "test" })).toBe(false);
+    });
+
+    it("should return false for undefined", () => {
+        expect(isInsertReplaceEdit(undefined)).toBe(false);
+    });
+});
+
+describe("isCompletionList", () => {
+    it("should return true for a CompletionList", () => {
+        expect(isCompletionList({ isIncomplete: false, items: [] })).toBe(true);
+    });
+
+    it("should return false for a bare item array", () => {
+        expect(isCompletionList([{ label: "test" }])).toBe(false);
     });
 });
 

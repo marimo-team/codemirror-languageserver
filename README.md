@@ -77,6 +77,28 @@ const view = new EditorView({
 
 ## Advanced Configuration
 
+### Completion Behavior
+
+```typescript
+const ls = languageServer({
+  // ...
+
+  // Optional: Filter complete (`isIncomplete: false`) completion lists
+  // client-side instead of re-querying the server on every keystroke.
+  clientSideFiltering: true,
+});
+```
+
+Completion items the server marks deprecated get a `cm-deprecated` class,
+shown with a strikethrough by default. Override with:
+
+```css
+.cm-tooltip-autocomplete li.cm-deprecated .cm-completionLabel {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+```
+
 ### Sharing Client Across Multiple Instances
 
 ```typescript

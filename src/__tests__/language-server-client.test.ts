@@ -320,8 +320,28 @@ describe("LanguageServerClient", () => {
                     snippetSupport: true,
                     commitCharactersSupport: true,
                     documentationFormat: ["markdown", "plaintext"],
-                    deprecatedSupport: false,
+                    deprecatedSupport: true,
                     preselectSupport: false,
+                    insertReplaceSupport: true,
+                    tagSupport: {
+                        valueSet: [1],
+                    },
+                    resolveSupport: {
+                        properties: [
+                            "documentation",
+                            "detail",
+                            "additionalTextEdits",
+                        ],
+                    },
+                },
+                completionList: {
+                    itemDefaults: [
+                        "commitCharacters",
+                        "editRange",
+                        "insertTextFormat",
+                        "insertTextMode",
+                        "data",
+                    ],
                 },
                 contextSupport: false,
             });

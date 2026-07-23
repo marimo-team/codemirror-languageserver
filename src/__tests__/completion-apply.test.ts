@@ -299,3 +299,219 @@ describe("sortCompletionItems with opaque sortText", () => {
         expect(sorted.map((i) => i.label)).toEqual(["temp", "test"]);
     });
 });
+
+describe("convertCompletionItem InsertReplaceEdit", () => {
+    it("applies an InsertReplaceEdit using its replace range", () => {
+        // Cursor after "fo" inside the token "foXX"; replace covers the
+        // whole token while insert only covers the typed prefix
+        const view = createView("foXX");
+        const item: LSP.CompletionItem = {
+            label: "foobar",
+            textEdit: {
+                newText: "foobar",
+                insert: {
+                    start: { line: 0, character: 0 },
+                    end: { line: 0, character: 2 },
+                },
+                replace: {
+                    start: { line: 0, character: 0 },
+                    end: { line: 0, character: 4 },
+                },
+            },
+        };
+        const completion = convertCompletionItem(item, defaultOptions);
+        // biome-ignore lint/suspicious/noExplicitAny: test invokes apply directly
+        (completion.apply as any)(view, completion, 0, 2);
+        expect(view.state.doc.toString()).toBe("foobar");
+    });
+
+    it("falls back to the token range when the replace range is invalid", () => {
+        const view = createView("fo");
+        const item: LSP.CompletionItem = {
+            label: "foobar",
+            textEdit: {
+                newText: "foobar",
+                insert: {
+                    start: { line: 0, character: 0 },
+                    end: { line: 0, character: 2 },
+                },
+                replace: {
+                    start: { line: 0, character: 0 },
+                    end: { line: 9, character: 9 },
+                },
+            },
+        };
+        const completion = convertCompletionItem(item, defaultOptions);
+        // biome-ignore lint/suspicious/noExplicitAny: test invokes apply directly
+        (completion.apply as any)(view, completion, 0, 2);
+        expect(view.state.doc.toString()).toBe("foobar");
+    });
+});
+
+describe("convertCompletionItem lazy additionalTextEdits", () => {
+    it("applies additionalTextEdits arriving via completionItem/resolve", async () => {
+        // "f x" -> main edit replaces "f" (0-1) with "foobar"; the resolve
+        // response brings an edit replacing "x" (2-3, pre-completion coords)
+        const view = createView("f x");
+        const item: LSP.CompletionItem = {
+            label: "foobar",
+            insertText: "foobar",
+        };
+        const resolveItem = vi.fn().mockResolvedValue({
+            ...item,
+            additionalTextEdits: [
+                {
+                    range: {
+                        start: { line: 0, character: 2 },
+                        end: { line: 0, character: 3 },
+                    },
+                    newText: "imported",
+                },
+            ],
+        });
+        const completion = convertCompletionItem(item, {
+            ...defaultOptions,
+            hasResolveProvider: true,
+            resolveItem,
+        });
+        // biome-ignore lint/suspicious/noExplicitAny: test invokes apply directly
+        (completion.apply as any)(view, completion, 0, 1);
+        expect(view.state.doc.toString()).toBe("foobar x");
+        await vi.waitFor(() =>
+            expect(view.state.doc.toString()).toBe("foobar imported"),
+        );
+    });
+
+    it("applies resolve-provided edits after a snippet expansion", async () => {
+        const view = createView("f x");
+        const item: LSP.CompletionItem = {
+            label: "foo",
+            insertText: "foo($1)",
+            insertTextFormat: 2, // Snippet
+        };
+        const resolveItem = vi.fn().mockResolvedValue({
+            ...item,
+            additionalTextEdits: [
+                {
+                    range: {
+                        start: { line: 0, character: 2 },
+                        end: { line: 0, character: 3 },
+                    },
+                    newText: "import",
+                },
+            ],
+        });
+        const completion = convertCompletionItem(item, {
+            ...defaultOptions,
+            useSnippetOnCompletion: true,
+            hasResolveProvider: true,
+            resolveItem,
+        });
+        // biome-ignore lint/suspicious/noExplicitAny: test invokes apply directly
+        (completion.apply as any)(view, completion, 0, 1);
+        await vi.waitFor(() =>
+            expect(view.state.doc.toString()).toBe("foo() import"),
+        );
+    });
+
+    it("does not re-apply edits the item already carried", async () => {
+        const view = createView("f x");
+        const item: LSP.CompletionItem = {
+            label: "foobar",
+            insertText: "foobar",
+            additionalTextEdits: [
+                {
+                    range: {
+                        start: { line: 0, character: 2 },
+                        end: { line: 0, character: 3 },
+                    },
+                    newText: "imported",
+                },
+            ],
+        };
+        const resolveItem = vi.fn().mockResolvedValue(item);
+        const completion = convertCompletionItem(item, {
+            ...defaultOptions,
+            hasResolveProvider: true,
+            resolveItem,
+        });
+        // biome-ignore lint/suspicious/noExplicitAny: test invokes apply directly
+        (completion.apply as any)(view, completion, 0, 1);
+        expect(view.state.doc.toString()).toBe("foobar imported");
+        // Give any stray resolve a chance to run, then check nothing changed
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(resolveItem).not.toHaveBeenCalled();
+        expect(view.state.doc.toString()).toBe("foobar imported");
+    });
+
+    it("skips resolve-provided edits that overlap the main edit", async () => {
+        const view = createView("f x");
+        const item: LSP.CompletionItem = {
+            label: "foobar",
+            insertText: "foobar",
+        };
+        const resolveItem = vi.fn().mockResolvedValue({
+            ...item,
+            additionalTextEdits: [
+                {
+                    // Overlaps the main edit [0, 1)
+                    range: {
+                        start: { line: 0, character: 0 },
+                        end: { line: 0, character: 1 },
+                    },
+                    newText: "clobber",
+                },
+            ],
+        });
+        const completion = convertCompletionItem(item, {
+            ...defaultOptions,
+            hasResolveProvider: true,
+            resolveItem,
+        });
+        // biome-ignore lint/suspicious/noExplicitAny: test invokes apply directly
+        (completion.apply as any)(view, completion, 0, 1);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(view.state.doc.toString()).toBe("foobar x");
+    });
+});
+
+describe("convertCompletionItem lazy edits racing user input", () => {
+    it("drops resolve-provided edits when the document changed during resolve", async () => {
+        const view = createView("f x");
+        const item: LSP.CompletionItem = {
+            label: "foobar",
+            insertText: "foobar",
+        };
+        let resolveNow: (value: LSP.CompletionItem) => void = () => {};
+        const resolveItem = vi.fn().mockReturnValue(
+            new Promise<LSP.CompletionItem>((resolve) => {
+                resolveNow = resolve;
+            }),
+        );
+        const completion = convertCompletionItem(item, {
+            ...defaultOptions,
+            hasResolveProvider: true,
+            resolveItem,
+        });
+        // biome-ignore lint/suspicious/noExplicitAny: test invokes apply directly
+        (completion.apply as any)(view, completion, 0, 1);
+        expect(view.state.doc.toString()).toBe("foobar x");
+
+        // User keeps typing before the resolve response arrives
+        view.dispatch({ changes: { from: 6, to: 6, insert: "!" } });
+        resolveNow({
+            ...item,
+            additionalTextEdits: [
+                {
+                    range: {
+                        start: { line: 0, character: 2 },
+                        end: { line: 0, character: 3 },
+                    },
+                    newText: "imported",
+                },
+            ],
+        });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(view.state.doc.toString()).toBe("foobar! x");
+    });
+});
