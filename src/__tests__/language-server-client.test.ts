@@ -309,9 +309,9 @@ describe("LanguageServerClient", () => {
 
             expect(caps.textDocument.synchronization).toEqual({
                 dynamicRegistration: true,
-                willSave: false,
-                didSave: false,
-                willSaveWaitUntil: false,
+                willSave: true,
+                didSave: true,
+                willSaveWaitUntil: true,
             });
 
             expect(caps.textDocument.completion).toEqual({

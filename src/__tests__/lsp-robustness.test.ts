@@ -256,3 +256,72 @@ describe("textDocumentDidClose", () => {
         });
     });
 });
+
+describe("document open ref-counting", () => {
+    function openParams(uri: string) {
+        return {
+            textDocument: {
+                uri,
+                languageId: "plaintext",
+                text: "",
+                version: 0,
+            },
+        };
+    }
+
+    function countNotifications(
+        // biome-ignore lint/suspicious/noExplicitAny: inspecting mock args
+        internal: any,
+        method: string,
+    ) {
+        return internal.notify.mock.calls.filter(
+            // biome-ignore lint/suspicious/noExplicitAny: inspecting mock args
+            (call: any[]) => call[0]?.method === method,
+        ).length;
+    }
+
+    it("sends didOpen only once when the same URI is opened twice", async () => {
+        const client = new LanguageServerClient(baseOptions());
+        const internal = clientInstances.at(-1);
+
+        await client.textDocumentDidOpen(openParams("file:///dup"));
+        await client.textDocumentDidOpen(openParams("file:///dup"));
+
+        expect(countNotifications(internal, "textDocument/didOpen")).toBe(1);
+    });
+
+    it("sends didClose only when the last view closes", async () => {
+        const client = new LanguageServerClient(baseOptions());
+        const internal = clientInstances.at(-1);
+
+        await client.textDocumentDidOpen(openParams("file:///dup"));
+        await client.textDocumentDidOpen(openParams("file:///dup"));
+
+        // First close just drops a reference; server is not notified yet.
+        await client.textDocumentDidClose({
+            textDocument: { uri: "file:///dup" },
+        });
+        expect(countNotifications(internal, "textDocument/didClose")).toBe(0);
+
+        // Second close is the last reference and does notify.
+        await client.textDocumentDidClose({
+            textDocument: { uri: "file:///dup" },
+        });
+        expect(countNotifications(internal, "textDocument/didClose")).toBe(1);
+    });
+
+    it("tracks distinct URIs independently", async () => {
+        const client = new LanguageServerClient(baseOptions());
+        const internal = clientInstances.at(-1);
+
+        await client.textDocumentDidOpen(openParams("file:///a"));
+        await client.textDocumentDidOpen(openParams("file:///b"));
+
+        expect(countNotifications(internal, "textDocument/didOpen")).toBe(2);
+
+        await client.textDocumentDidClose({
+            textDocument: { uri: "file:///a" },
+        });
+        expect(countNotifications(internal, "textDocument/didClose")).toBe(1);
+    });
+});

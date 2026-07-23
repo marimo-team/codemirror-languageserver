@@ -476,6 +476,7 @@ describe("exports", () => {
             "LanguageServerClient",
             "LanguageServerPlugin",
             "documentUri",
+            "getLanguageServerPlugin",
             "languageId",
             "languageServer",
             "languageServerWithClient",
