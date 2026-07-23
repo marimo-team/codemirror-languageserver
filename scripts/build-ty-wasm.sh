@@ -29,9 +29,11 @@ else
         git clone --filter=blob:none https://github.com/astral-sh/ruff "$RUFF_DIR"
     fi
     echo "Checking out ruff@$RUFF_REF ..."
+    # Fetch and hard-reset to the exact fetched commit so the built artifact
+    # always matches RUFF_REF (fails loudly via `set -e` if the fetch fails,
+    # rather than silently building a stale or locally-modified revision).
     git -C "$RUFF_DIR" fetch --quiet origin "$RUFF_REF"
-    git -C "$RUFF_DIR" checkout --quiet "$RUFF_REF"
-    git -C "$RUFF_DIR" pull --quiet --ff-only origin "$RUFF_REF" || true
+    git -C "$RUFF_DIR" checkout --quiet --force --detach FETCH_HEAD
 fi
 
 echo "Building ty_wasm (this compiles a large Rust project; it can take a while)..."

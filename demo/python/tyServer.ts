@@ -1,5 +1,6 @@
 import type * as LSP from "vscode-languageserver-protocol";
 import { DiagnosticSeverity } from "vscode-languageserver-protocol";
+import { rangesOverlap } from "../shared/ranges";
 
 // Structural types for the subset of the ty_wasm module we use. ty positions
 // are 1-indexed; LSP is 0-indexed.
@@ -25,7 +26,6 @@ interface TyDiagnostic {
     id(): string;
     severity(): number;
     toRange(workspace: TyWorkspace): TyRange | undefined;
-    codeAction(workspace: TyWorkspace): TyCodeAction | undefined;
 }
 interface TyFileHandle {
     path(): string;
@@ -34,6 +34,12 @@ export interface TyWorkspace {
     openFile(path: string, contents: string): TyFileHandle;
     updateFile(handle: TyFileHandle, contents: string): void;
     checkFile(handle: TyFileHandle): TyDiagnostic[];
+    // Superset of Diagnostic.codeAction: also returns workspace-derived actions
+    // (e.g. import suggestions) that need whole-project analysis.
+    codeActions(
+        handle: TyFileHandle,
+        diagnostic: TyDiagnostic,
+    ): TyCodeAction[] | undefined;
 }
 
 enum TySeverity {
@@ -68,23 +74,24 @@ export class TyServer {
             if (!(tyRange && rangesOverlap(toRange(tyRange), params.range))) {
                 continue;
             }
-            const action = diagnostic.codeAction(this.workspace);
-            if (!action) {
-                continue;
-            }
-            actions.push({
-                title: `${action.title} (ty)`,
-                kind: "quickfix",
-                isPreferred: action.preferred,
-                edit: {
-                    changes: {
-                        [uri]: action.edits.map((edit) => ({
-                            range: toRange(edit.range),
-                            newText: edit.new_text,
-                        })),
+            for (const action of this.workspace.codeActions(
+                handle,
+                diagnostic,
+            ) ?? []) {
+                actions.push({
+                    title: `${action.title} (ty)`,
+                    kind: "quickfix",
+                    isPreferred: action.preferred,
+                    edit: {
+                        changes: {
+                            [uri]: action.edits.map((edit) => ({
+                                range: toRange(edit.range),
+                                newText: edit.new_text,
+                            })),
+                        },
                     },
-                },
-            });
+                });
+            }
         }
         return actions;
     }
@@ -140,15 +147,4 @@ function toSeverity(severity: number): LSP.DiagnosticSeverity {
         default:
             return DiagnosticSeverity.Information;
     }
-}
-
-function rangesOverlap(a: LSP.Range, b: LSP.Range): boolean {
-    return !(isBefore(a.end, b.start) || isBefore(b.end, a.start));
-}
-
-function isBefore(a: LSP.Position, b: LSP.Position): boolean {
-    if (a.line !== b.line) {
-        return a.line < b.line;
-    }
-    return a.character < b.character;
 }
