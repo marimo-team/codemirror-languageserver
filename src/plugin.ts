@@ -100,6 +100,7 @@ const SIGNATURE_TOOLTIP_MAX_LINES_BACK = 20;
 export class LanguageServerPlugin implements PluginValue {
     private documentVersion: number;
     private pluginId: string;
+    private pendingDocumentChanges = new Set<Promise<void>>();
     /**
      * The language server client instance.
      */
@@ -207,10 +208,18 @@ export class LanguageServerPlugin implements PluginValue {
             this.sendIncrementalChanges &&
             syncKind === TextDocumentSyncKind.Incremental
         ) {
-            this.sendChanges(eventsFromChangeSet(doc, changes));
+            this.trackDocumentChanges(eventsFromChangeSet(doc, changes));
         } else {
-            this.sendChanges([{ text: state.doc.toString() }]);
+            this.trackDocumentChanges([{ text: state.doc.toString() }]);
         }
+    }
+
+    private trackDocumentChanges(
+        contentChanges: LSP.TextDocumentContentChangeEvent[],
+    ) {
+        const pending = this.sendChanges(contentChanges);
+        this.pendingDocumentChanges.add(pending);
+        void pending.finally(() => this.pendingDocumentChanges.delete(pending));
     }
 
     public destroy() {
@@ -360,6 +369,9 @@ export class LanguageServerPlugin implements PluginValue {
         if (!this.featureOptions.completionEnabled) {
             return null;
         }
+
+        // Completion requests must observe all preceding document updates.
+        await Promise.all(this.pendingDocumentChanges);
 
         if (
             !(this.client.ready && this.client.capabilities?.completionProvider)
@@ -1638,9 +1650,10 @@ export function getCompletionTriggerKind(
         triggerKind = CompletionTriggerKind.TriggerCharacter;
         triggerCharacter = prevChar;
     }
-    // For manual invocation, only show completions when typing
-    // Use the provided pattern or default to words, dots, commas, or slashes
+    // Implicit completion that wasn't caused by a trigger character requires a
+    // matching prefix. Explicit completion may query with an empty prefix.
     if (
+        !explicit &&
         triggerKind === CompletionTriggerKind.Invoked &&
         !context.matchBefore(matchBeforePattern || /(\w+|\w+\.|\/|,)$/)
     ) {
