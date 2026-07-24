@@ -22,6 +22,13 @@ interface TyModule {
         positionEncoding: number,
         options: unknown,
     ) => TyWorkspace;
+    Position: new (
+        line: number,
+        column: number,
+    ) => {
+        line: number;
+        column: number;
+    };
     PositionEncoding: { Utf16: number };
 }
 
@@ -43,7 +50,7 @@ async function loadTy(): Promise<TyServer | null> {
         const ty = (await loader()) as unknown as TyModule;
         await ty.default();
         const workspace = new ty.Workspace("/", ty.PositionEncoding.Utf16, {});
-        return new TyServer(workspace);
+        return new TyServer(workspace, ty.Position);
     } catch (error) {
         console.error("Failed to load ty; continuing with Ruff only", error);
         return null;
@@ -70,7 +77,18 @@ function publish(servers: PythonServers, uri: string, text: string): void {
 
 serve({
     requests: {
-        initialize: async () => (await ready).ruff.initializeResult(),
+        initialize: async () => {
+            const servers = await ready;
+            const result = servers.ruff.initializeResult();
+            // ty (when vendored) adds hover + completion; Ruff only lints/formats.
+            if (servers.ty) {
+                result.capabilities.hoverProvider = true;
+                result.capabilities.completionProvider = {
+                    triggerCharacters: ["."],
+                };
+            }
+            return result;
+        },
         "textDocument/codeAction": async (params) => {
             const servers = await ready;
             const codeActionParams = params as LSP.CodeActionParams;
@@ -78,6 +96,14 @@ serve({
                 ...servers.ruff.codeAction(codeActionParams),
                 ...(servers.ty?.codeAction(codeActionParams) ?? []),
             ];
+        },
+        "textDocument/hover": async (params) => {
+            const servers = await ready;
+            return servers.ty?.hover(params as LSP.HoverParams) ?? null;
+        },
+        "textDocument/completion": async (params) => {
+            const servers = await ready;
+            return servers.ty?.completion(params as LSP.CompletionParams) ?? [];
         },
     },
     notifications: {

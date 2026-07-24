@@ -53,10 +53,9 @@ jobs:
       - name: 📥 Install dependencies
         run: pnpm install --ignore-scripts --frozen-lockfile
 
-      # Non-fatal: if the Rust build fails, the demo still deploys Ruff-only
-      # (demo/python/worker.ts falls back when ty_wasm is absent).
+      # Fail the deploy if ty_wasm doesn't build rather than silently shipping
+      # the Ruff-only fallback (demo/python/worker.ts).
       - name: 🦀 Build ty_wasm
-        continue-on-error: true
         run: pnpm build:ty-wasm
 
       - name: 🛠️ Build project
