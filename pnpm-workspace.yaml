@@ -4,6 +4,8 @@ minimumReleaseAge: 20160
 verifyDepsBeforeRun: install
 minimumReleaseAgeExclude:
   - "@marimo-team/*"
+  # Renovate security update: vitest@3.2.6
+  - vitest@3.2.6
 blockExoticSubdeps: true
 trustPolicy: no-downgrade
 onlyBuiltDependencies: []
