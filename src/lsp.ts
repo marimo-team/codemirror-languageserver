@@ -28,6 +28,7 @@ export interface LSPRequestMap {
         LSP.CodeActionParams,
         (LSP.Command | LSP.CodeAction)[] | null,
     ];
+    "codeAction/resolve": [LSP.CodeAction, LSP.CodeAction];
     "textDocument/rename": [LSP.RenameParams, LSP.WorkspaceEdit | null];
     "textDocument/prepareRename": [
         LSP.PrepareRenameParams,
@@ -147,6 +148,23 @@ export interface KeyboardShortcuts {
     goToDefinition?: string;
     /** Keyboard shortcut for signature help (default: Ctrl/Cmd+Shift+Space) */
     signatureHelp?: string;
+    /** Keyboard shortcut for the code action menu (default: Ctrl/Cmd+.) */
+    codeActions?: string;
+}
+
+/**
+ * Configuration for the cursor-triggered code action menu
+ */
+export interface CodeActionsConfig {
+    /**
+     * Replaces the built-in menu: the host renders the actions and calls
+     * `apply` with the chosen one (resolve and edit/command application
+     * happen inside `apply`).
+     */
+    renderMenu?: (
+        actions: (LSP.Command | LSP.CodeAction)[],
+        apply: (action: LSP.Command | LSP.CodeAction) => Promise<void>,
+    ) => void;
 }
 
 /**
@@ -201,6 +219,8 @@ export interface LanguageServerOptions extends FeatureOptions {
     languageId?: string;
     /** Configuration for keyboard shortcuts */
     keyboardShortcuts?: KeyboardShortcuts;
+    /** Configuration for the code action menu */
+    codeActionsConfig?: CodeActionsConfig;
     /** Callback triggered when a go-to-definition action is performed */
     onGoToDefinition?: (result: DefinitionResult) => void;
 
@@ -694,6 +714,10 @@ export class LanguageServerClient {
             params,
             this.timeout,
         );
+    }
+
+    public async codeActionResolve(action: LSP.CodeAction) {
+        return await this.request("codeAction/resolve", action, this.timeout);
     }
 
     public async textDocumentRename(params: LSP.RenameParams) {
