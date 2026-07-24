@@ -10,6 +10,7 @@ import {
     languageServerWithClient,
 } from "../../src";
 import { MockLSPServer } from "../mockLSP";
+import { registerEditor, themeExtension } from "../shared/theme";
 
 /**
  * A {@link Transport} that routes JSON-RPC frames to an in-memory
@@ -160,6 +161,7 @@ export function mountMockDemo(container: HTMLElement): () => void {
             extensions: [
                 basicSetup,
                 javascript(),
+                themeExtension(),
                 tooltips({ position: "absolute" }),
                 lintGutter(),
                 languageServerWithClient({
@@ -176,6 +178,8 @@ export function mountMockDemo(container: HTMLElement): () => void {
         parent: container,
     });
 
+    const unregister = registerEditor(view);
+
     const currentLine = () =>
         view.state.doc.lineAt(view.state.selection.main.head).number - 1;
     addError.addEventListener("click", () => {
@@ -189,6 +193,7 @@ export function mountMockDemo(container: HTMLElement): () => void {
     });
 
     return () => {
+        unregister();
         view.destroy();
         client.close();
     };
