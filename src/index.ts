@@ -9,6 +9,7 @@ export {
 } from "./plugin.js";
 export {
     LanguageServerClient,
+    type CodeActionsConfig,
     type ServerRequestHandler,
 } from "./lsp.js";
 export {

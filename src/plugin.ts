@@ -41,6 +41,7 @@ import {
 } from "./completion.js";
 import { documentUri, languageId } from "./config.js";
 import {
+    type CodeActionsConfig,
     type DefinitionResult,
     type FeatureOptions,
     LanguageServerClient,
@@ -68,6 +69,65 @@ const logger = console.log;
 
 function uniqueId() {
     return String(Date.now() + Math.random());
+}
+
+/**
+ * A bare `Command` is executed as-is; only literal `CodeAction`s may carry an
+ * edit or be sent to `codeAction/resolve`.
+ */
+function isBareCommand(
+    action: LSP.Command | LSP.CodeAction,
+): action is LSP.Command {
+    return typeof (action as LSP.Command).command === "string";
+}
+
+function comparePosition(a: LSP.Position, b: LSP.Position): number {
+    return a.line !== b.line ? a.line - b.line : a.character - b.character;
+}
+
+function rangesOverlap(a: LSP.Range, b: LSP.Range): boolean {
+    // LSP ranges are end-exclusive, so adjacent ranges do not overlap. Empty
+    // ranges are treated as touching points so a zero-length diagnostic still
+    // matches actions at its position.
+    const aEmpty = comparePosition(a.start, a.end) === 0;
+    const bEmpty = comparePosition(b.start, b.end) === 0;
+    if (aEmpty || bEmpty) {
+        return (
+            comparePosition(a.start, b.end) <= 0 &&
+            comparePosition(b.start, a.end) <= 0
+        );
+    }
+    return (
+        comparePosition(a.start, b.end) < 0 &&
+        comparePosition(b.start, a.end) < 0
+    );
+}
+
+/**
+ * Actions that declare the diagnostics they address are matched by range
+ * overlap; actions without that metadata attach to every diagnostic.
+ */
+function actionAppliesToDiagnostic(
+    action: LSP.Command | LSP.CodeAction,
+    diagnostic: LSP.Diagnostic,
+): boolean {
+    if (isBareCommand(action)) {
+        return true;
+    }
+    const related = action.diagnostics;
+    if (!related || related.length === 0) {
+        return true;
+    }
+    return related.some((d) => rangesOverlap(d.range, diagnostic.range));
+}
+
+/**
+ * Lint diagnostic carrying the LSP diagnostic it was created from, so
+ * codeAction requests can echo the server's diagnostic (with `code`/`data`)
+ * back in their context.
+ */
+interface DiagnosticWithLSP extends Diagnostic {
+    lspDiagnostic?: LSP.Diagnostic;
 }
 
 /**
@@ -197,9 +257,15 @@ export class LanguageServerPlugin implements PluginValue {
      * Callback to render markdown content.
      */
     public markdownRenderer: (markdown: string) => string;
+    /**
+     * Configuration for the code action menu.
+     */
+    public codeActionsConfig: CodeActionsConfig | undefined;
     private disposeListener?: () => void;
     private destroyed = false;
     private documentOpened = false;
+    /** Dismisses the currently open code action menu, if any. */
+    private closeCodeActionMenu?: () => void;
 
     constructor(opts: {
         client: LanguageServerClient;
@@ -213,6 +279,7 @@ export class LanguageServerPlugin implements PluginValue {
         clientSideFiltering?: boolean;
         onGoToDefinition?: (result: DefinitionResult) => void;
         markdownRenderer?: (markdown: string) => string;
+        codeActionsConfig?: CodeActionsConfig;
     }) {
         const {
             client,
@@ -226,6 +293,7 @@ export class LanguageServerPlugin implements PluginValue {
             clientSideFiltering = false,
             onGoToDefinition,
             markdownRenderer = renderMarkdown,
+            codeActionsConfig,
         } = opts;
         this.documentVersion = 0;
         this.pluginId = uniqueId();
@@ -240,6 +308,7 @@ export class LanguageServerPlugin implements PluginValue {
         this.featureOptions = featureOptions;
         this.onGoToDefinition = onGoToDefinition;
         this.markdownRenderer = markdownRenderer;
+        this.codeActionsConfig = codeActionsConfig;
         registerPlugin(view, this);
         this.disposeListener = client.onNotification(
             this.processNotification.bind(this),
@@ -286,6 +355,7 @@ export class LanguageServerPlugin implements PluginValue {
         this.destroyed = true;
         this.disposeListener?.();
         this.disposeListener = undefined;
+        this.closeCodeActionMenu?.();
         unregisterPlugin(this.view, this);
         this.closeDocument();
     }
@@ -731,84 +801,19 @@ export class LanguageServerPlugin implements PluginValue {
         // server published for, even while code actions load below
         const doc = this.view.state.doc;
 
-        const diagnostics = params.diagnostics.map(
-            async ({
-                range,
-                message,
-                severity,
-                code,
-                source,
-            }): Promise<Diagnostic | null> => {
-                const from = posToOffset(doc, range.start);
-                const to = posToOffset(doc, range.end);
-                if (from == null || to == null || from > to) {
-                    // The range does not exist in this document (e.g. a
-                    // stale publish); dropping it beats misplacing it
-                    return null;
-                }
+        // One codeAction request for the whole publish; results are
+        // distributed to diagnostics by range overlap
+        let allActions: (LSP.Command | LSP.CodeAction)[] = [];
+        try {
+            allActions =
+                (await this.requestCodeActionsForDiagnostics(
+                    params.diagnostics,
+                )) ?? [];
+        } catch (error) {
+            // Diagnostics are still worth showing without their quick fixes
+            console.error("Failed to fetch code actions", error);
+        }
 
-                const actions = await this.requestCodeActions(range, [
-                    code as string,
-                ]);
-
-                const codemirrorActions = actions?.map(
-                    (action): Action => ({
-                        name:
-                            "command" in action &&
-                            typeof action.command === "object"
-                                ? action.command?.title || action.title
-                                : action.title,
-                        apply: async () => {
-                            if ("edit" in action && action.edit?.changes) {
-                                const changes =
-                                    action.edit.changes[this.documentUri];
-
-                                if (!changes) {
-                                    return;
-                                }
-
-                                this.applyEdits(this.view, changes);
-                            }
-
-                            if ("command" in action && action.command) {
-                                // TODO: Implement command execution
-                                // Execute command if present
-                                logger("Executing command:", action.command);
-                            }
-                        },
-                    }),
-                );
-
-                const baseSource = source || this.languageId;
-                const formattedSource =
-                    code != null && code !== ""
-                        ? `${baseSource}(${code})`
-                        : baseSource;
-
-                const diagnostic: Diagnostic = {
-                    from,
-                    to,
-                    severity: severityMap[severity ?? DiagnosticSeverity.Error],
-                    message: message,
-                    renderMessage: () => {
-                        const dom = document.createElement("div");
-                        if (this.allowHTMLContent) {
-                            dom.innerHTML = this.markdownRenderer(message);
-                        } else {
-                            dom.textContent = message;
-                        }
-                        return dom;
-                    },
-                    source: formattedSource,
-                    markClass: this.pluginId,
-                    actions: codemirrorActions,
-                };
-
-                return diagnostic;
-            },
-        );
-
-        const resolvedDiagnostics = await Promise.all(diagnostics);
         // Bail out if this publish is no longer current. Code actions are
         // awaited above, so by now the plugin may have been torn down, a newer
         // publish may have superseded this one, or the document may have
@@ -826,8 +831,71 @@ export class LanguageServerPlugin implements PluginValue {
         if (this.view.state.doc !== doc) {
             return;
         }
+
+        const diagnostics = params.diagnostics.map(
+            (lspDiagnostic): Diagnostic | null => {
+                const { range, message, severity, code, source } =
+                    lspDiagnostic;
+                const from = posToOffset(doc, range.start);
+                const to = posToOffset(doc, range.end);
+                if (from == null || to == null || from > to) {
+                    // The range does not exist in this document (e.g. a
+                    // stale publish); dropping it beats misplacing it
+                    return null;
+                }
+
+                const codemirrorActions = allActions
+                    .filter((action) =>
+                        actionAppliesToDiagnostic(action, lspDiagnostic),
+                    )
+                    .map(
+                        (action): Action => ({
+                            name:
+                                "command" in action &&
+                                typeof action.command === "object"
+                                    ? action.command?.title || action.title
+                                    : action.title,
+                            apply: () => {
+                                void this.applyCodeAction(action);
+                            },
+                        }),
+                    );
+
+                const baseSource = source || this.languageId;
+                const formattedSource =
+                    code != null && code !== ""
+                        ? `${baseSource}(${code})`
+                        : baseSource;
+
+                const diagnostic: DiagnosticWithLSP = {
+                    from,
+                    to,
+                    severity: severityMap[severity ?? DiagnosticSeverity.Error],
+                    message: message,
+                    renderMessage: () => {
+                        const dom = document.createElement("div");
+                        if (this.allowHTMLContent) {
+                            dom.innerHTML = this.markdownRenderer(message);
+                        } else {
+                            dom.textContent = message;
+                        }
+                        return dom;
+                    },
+                    source: formattedSource,
+                    markClass: this.pluginId,
+                    actions:
+                        codemirrorActions.length > 0
+                            ? codemirrorActions
+                            : undefined,
+                    lspDiagnostic,
+                };
+
+                return diagnostic;
+            },
+        );
+
         this.setOwnDiagnostics(
-            resolvedDiagnostics.filter(
+            diagnostics.filter(
                 (diagnostic): diagnostic is Diagnostic => diagnostic != null,
             ),
         );
@@ -857,15 +925,60 @@ export class LanguageServerPlugin implements PluginValue {
         this.setOwnDiagnostics([]);
     }
 
-    private async requestCodeActions(
-        range: LSP.Range,
-        diagnosticCodes: string[],
+    /**
+     * One codeAction request covering a whole publish: the range spans all
+     * diagnostics and the context carries the server's diagnostics verbatim.
+     */
+    private async requestCodeActionsForDiagnostics(
+        diagnostics: LSP.Diagnostic[],
     ): Promise<(LSP.Command | LSP.CodeAction)[] | null> {
-        // Check if code actions are enabled
+        const first = diagnostics[0];
+        if (!first) {
+            return null;
+        }
         if (!this.featureOptions.codeActionsEnabled) {
             return null;
         }
+        if (
+            !(
+                this.client.ready &&
+                this.client.hasCapability("textDocument/codeAction")
+            )
+        ) {
+            return null;
+        }
 
+        let start = first.range.start;
+        let end = first.range.end;
+        for (const diagnostic of diagnostics) {
+            if (comparePosition(diagnostic.range.start, start) < 0) {
+                start = diagnostic.range.start;
+            }
+            if (comparePosition(diagnostic.range.end, end) > 0) {
+                end = diagnostic.range.end;
+            }
+        }
+
+        return await this.client.textDocumentCodeAction({
+            textDocument: { uri: this.documentUri },
+            range: { start, end },
+            context: { diagnostics },
+        });
+    }
+
+    /**
+     * Requests code actions for a range, with the overlapping diagnostics in
+     * the request context. Hosts can build custom entry points with `only`,
+     * e.g. an "Organize imports" button via `["source.organizeImports"]`.
+     */
+    public async requestCodeActions(
+        view: EditorView,
+        range: LSP.Range,
+        only?: string[],
+    ): Promise<(LSP.Command | LSP.CodeAction)[] | null> {
+        if (!this.featureOptions.codeActionsEnabled) {
+            return null;
+        }
         if (
             !(
                 this.client.ready &&
@@ -879,16 +992,311 @@ export class LanguageServerPlugin implements PluginValue {
             textDocument: { uri: this.documentUri },
             range,
             context: {
-                diagnostics: [
-                    {
-                        range,
-                        code: diagnosticCodes[0],
-                        source: this.languageId,
-                        message: "",
-                    },
-                ],
+                diagnostics: this.diagnosticsInRange(view, range),
+                ...(only ? { only } : {}),
             },
         });
+    }
+
+    /**
+     * Requests code actions for the current selection (or the empty range at
+     * the cursor), with the overlapping diagnostics in the request context.
+     */
+    public async requestCodeActionsAtSelection(
+        view: EditorView,
+    ): Promise<(LSP.Command | LSP.CodeAction)[] | null> {
+        const { from, to } = view.state.selection.main;
+        return await this.requestCodeActions(view, {
+            start: offsetToPos(view.state.doc, from),
+            end: offsetToPos(view.state.doc, to),
+        });
+    }
+
+    /**
+     * The diagnostics currently shown in the editor that overlap the given
+     * range, as LSP diagnostics. Diagnostics this plugin created echo the
+     * server's original diagnostic; others are converted from their
+     * CodeMirror shape.
+     */
+    private diagnosticsInRange(
+        view: EditorView,
+        range: LSP.Range,
+    ): LSP.Diagnostic[] {
+        const doc = view.state.doc;
+        const from = posToOffset(doc, range.start);
+        const to = posToOffset(doc, range.end);
+        if (from == null || to == null) {
+            return [];
+        }
+        const severityBack: Record<
+            NonNullable<Diagnostic["severity"]>,
+            DiagnosticSeverity
+        > = {
+            error: DiagnosticSeverity.Error,
+            warning: DiagnosticSeverity.Warning,
+            info: DiagnosticSeverity.Information,
+            hint: DiagnosticSeverity.Hint,
+        };
+        const results: LSP.Diagnostic[] = [];
+        forEachDiagnostic(view.state, (diagnostic, dFrom, dTo) => {
+            if (dFrom > to || dTo < from) {
+                return;
+            }
+            const mappedRange: LSP.Range = {
+                start: offsetToPos(doc, dFrom),
+                end: offsetToPos(doc, dTo),
+            };
+            const original = (diagnostic as DiagnosticWithLSP).lspDiagnostic;
+            if (original) {
+                results.push({ ...original, range: mappedRange });
+            } else {
+                results.push({
+                    range: mappedRange,
+                    message: diagnostic.message,
+                    severity: severityBack[diagnostic.severity],
+                    source: diagnostic.source,
+                });
+            }
+        });
+        return results;
+    }
+
+    /**
+     * Applies a code action: lazily resolves it via `codeAction/resolve` when
+     * needed, then applies its workspace edit and/or executes its command.
+     */
+    public async applyCodeAction(
+        action: LSP.Command | LSP.CodeAction,
+    ): Promise<void> {
+        const resolved = await this.resolveCodeAction(action);
+        if (this.destroyed) {
+            return;
+        }
+
+        if (isBareCommand(resolved)) {
+            // TODO: Implement command execution
+            logger("Executing command:", resolved);
+            return;
+        }
+        if (resolved.edit) {
+            await this.applyWorkspaceEdit(this.view, resolved.edit);
+        }
+        if (resolved.command) {
+            // TODO: Implement command execution
+            logger("Executing command:", resolved.command);
+        } else if (!resolved.edit) {
+            showErrorMessage(
+                this.view,
+                `Code action "${action.title}" has nothing to apply`,
+            );
+        }
+    }
+
+    /**
+     * Resolves a code action via `codeAction/resolve` — only for literal
+     * `CodeAction`s missing both `edit` and `command`, and only when the
+     * server advertises `resolveProvider`. Falls back to the original action
+     * if the request fails.
+     */
+    private async resolveCodeAction(
+        action: LSP.Command | LSP.CodeAction,
+    ): Promise<LSP.Command | LSP.CodeAction> {
+        if (isBareCommand(action)) {
+            return action;
+        }
+        if (action.edit || action.command) {
+            return action;
+        }
+        if (!this.serverSupportsCodeActionResolve()) {
+            return action;
+        }
+        try {
+            return await this.client.codeActionResolve(action);
+        } catch (error) {
+            console.error("Failed to resolve code action", error);
+            return action;
+        }
+    }
+
+    /**
+     * Whether the server can answer `codeAction/resolve`, announced either
+     * statically or via a dynamic codeAction registration.
+     */
+    private serverSupportsCodeActionResolve(): boolean {
+        const provider = this.client.capabilities?.codeActionProvider;
+        if (typeof provider === "object" && provider.resolveProvider) {
+            return true;
+        }
+        for (const registration of this.client.dynamicCapabilities.values()) {
+            if (registration.method === "textDocument/codeAction") {
+                const options = registration.registerOptions as
+                    | LSP.CodeActionRegistrationOptions
+                    | undefined;
+                if (options?.resolveProvider) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Requests code actions for the current selection and presents them via
+     * the host's `codeActionsConfig.renderMenu` or the built-in popup. Bound
+     * to the `codeActions` keyboard shortcut.
+     * @returns True when at least one action was shown
+     */
+    public async showCodeActionsMenu(view: EditorView): Promise<boolean> {
+        const requestState = view.state;
+        const actions = await this.requestCodeActionsAtSelection(view);
+        if (this.destroyed) {
+            return false;
+        }
+        // The document or selection may have moved while the request was in
+        // flight; actions for the old context must not be shown
+        if (
+            view.state.doc !== requestState.doc ||
+            !view.state.selection.main.eq(requestState.selection.main)
+        ) {
+            return false;
+        }
+        if (!actions || actions.length === 0) {
+            showErrorMessage(view, "No code actions available");
+            return false;
+        }
+        const apply = async (action: LSP.Command | LSP.CodeAction) => {
+            await this.applyCodeAction(action);
+        };
+        if (this.codeActionsConfig?.renderMenu) {
+            this.codeActionsConfig.renderMenu(actions, apply);
+            return true;
+        }
+        this.showDefaultCodeActionsMenu(view, actions, apply);
+        return true;
+    }
+
+    /**
+     * The built-in code action menu: a small listbox at the cursor, keyboard
+     * navigable (ArrowUp/Down, Enter, Escape), dismissed by outside clicks.
+     */
+    private showDefaultCodeActionsMenu(
+        view: EditorView,
+        actions: (LSP.Command | LSP.CodeAction)[],
+        apply: (action: LSP.Command | LSP.CodeAction) => Promise<void>,
+    ): void {
+        // Only one menu at a time
+        this.closeCodeActionMenu?.();
+
+        const menu = document.createElement("div");
+        menu.className = "cm-code-action-menu";
+        menu.setAttribute("role", "listbox");
+        menu.style.cssText =
+            "position: absolute; display: flex; flex-direction: column; padding: 2px; background: white; border: 1px solid #ddd; box-shadow: 0 2px 8px rgba(0,0,0,.15); z-index: 99;";
+
+        const handleOutsideMousedown = (event: MouseEvent) => {
+            if (!menu.contains(event.target as Node)) {
+                dismiss();
+            }
+        };
+        const dismiss = () => {
+            if (this.closeCodeActionMenu === dismiss) {
+                this.closeCodeActionMenu = undefined;
+            }
+            menu.remove();
+            document.removeEventListener("mousedown", handleOutsideMousedown);
+        };
+        this.closeCodeActionMenu = dismiss;
+
+        const buttons = actions.map((action) => {
+            const item = document.createElement("button");
+            item.type = "button";
+            item.className = "cm-code-action-item";
+            item.style.cssText =
+                "display: flex; gap: 8px; align-items: baseline; padding: 4px 8px; border: none; background: none; text-align: left; cursor: pointer; font: inherit;";
+            const title = document.createElement("span");
+            title.textContent = action.title;
+            item.appendChild(title);
+            if (!isBareCommand(action) && action.kind) {
+                const kind = document.createElement("span");
+                kind.className = "cm-code-action-kind";
+                kind.style.cssText =
+                    "color: #888; font-size: 85%; margin-left: auto;";
+                kind.textContent = action.kind;
+                item.appendChild(kind);
+            }
+            if (!isBareCommand(action) && action.disabled) {
+                item.disabled = true;
+                item.title = action.disabled.reason;
+                item.style.opacity = "0.5";
+                item.style.cursor = "default";
+            }
+            item.addEventListener("click", () => {
+                dismiss();
+                view.focus();
+                void apply(action);
+            });
+            menu.appendChild(item);
+            return item;
+        });
+
+        // Roving focus keeps keystrokes out of the editor while the menu is
+        // open
+        let selected = buttons.findIndex((button) => !button.disabled);
+        const focusItem = (index: number) => {
+            selected = index;
+            buttons[index]?.focus();
+        };
+        const move = (direction: 1 | -1) => {
+            for (
+                let i = selected + direction;
+                i >= 0 && i < buttons.length;
+                i += direction
+            ) {
+                if (!buttons[i]?.disabled) {
+                    focusItem(i);
+                    return;
+                }
+            }
+        };
+        menu.tabIndex = -1;
+        menu.addEventListener("keydown", (event) => {
+            if (event.key === "Escape") {
+                dismiss();
+                view.focus();
+            } else if (event.key === "ArrowDown") {
+                move(1);
+            } else if (event.key === "ArrowUp") {
+                move(-1);
+            } else if (event.key === "Enter") {
+                const item = buttons[selected];
+                if (item && !item.disabled) {
+                    item.click();
+                }
+            } else {
+                return;
+            }
+            event.preventDefault();
+            event.stopPropagation();
+        });
+
+        // Coordinates may be unavailable (view not laid out); still open the
+        // menu, just unpositioned
+        const coords = view.coordsAtPos(view.state.selection.main.from);
+        if (coords) {
+            // coordsAtPos returns viewport coordinates; the menu is
+            // absolutely positioned in the page
+            menu.style.left = `${coords.left + window.scrollX}px`;
+            menu.style.top = `${coords.bottom + window.scrollY + 5}px`;
+        }
+
+        document.addEventListener("mousedown", handleOutsideMousedown);
+        document.body.appendChild(menu);
+        if (selected === -1) {
+            // Every action is disabled; focus the menu so Escape still works
+            menu.focus();
+        } else {
+            focusItem(selected);
+        }
     }
 
     public async requestRename(
@@ -1401,12 +1809,14 @@ export class LanguageServerPlugin implements PluginValue {
     }
 
     /**
-     * Apply workspace edit from rename operation
+     * Applies a workspace edit (from rename, code actions, etc.) to the
+     * current document in a single transaction. Edits targeting other
+     * documents and file create/rename/delete operations are not supported.
      * @param view The editor view
      * @param edit The workspace edit to apply
      * @returns True if changes were applied successfully
      */
-    protected async applyRenameEdit(
+    protected async applyWorkspaceEdit(
         view: EditorView,
         edit: LSP.WorkspaceEdit | null,
     ): Promise<boolean> {
@@ -1428,42 +1838,51 @@ export class LanguageServerPlugin implements PluginValue {
 
         // Handle documentChanges (preferred) if available
         if (documentChanges.length > 0) {
+            // Collect every edit for this document so multi-entry edits apply
+            // in one transaction; unsupported entries are skipped with a
+            // message instead of dropping the whole edit
+            const edits: LSP.TextEdit[] = [];
+            let skipped: string | null = null;
             for (const docChange of documentChanges) {
                 if ("textDocument" in docChange) {
-                    // This is a TextDocumentEdit
-                    const uri = docChange.textDocument.uri;
-
-                    if (uri !== this.documentUri) {
-                        showErrorMessage(
-                            view,
-                            "Multi-file rename not supported yet",
-                        );
-                        continue;
+                    if (docChange.textDocument.uri === this.documentUri) {
+                        edits.push(...docChange.edits);
+                    } else {
+                        skipped = "Multi-file edits not supported yet";
                     }
-
-                    return this.applyEdits(view, docChange.edits);
+                } else {
+                    // CreateFile, RenameFile, or DeleteFile operation
+                    skipped =
+                        "File creation, deletion, or renaming operations not supported yet";
                 }
-
-                // This is a CreateFile, RenameFile, or DeleteFile operation
-                showErrorMessage(
-                    view,
-                    "File creation, deletion, or renaming operations not supported yet",
-                );
+            }
+            if (skipped) {
+                showErrorMessage(view, skipped);
+            }
+            if (edits.length === 0) {
                 return false;
             }
-            return false;
+            return this.applyEdits(view, edits);
         }
 
         // Fall back to changes if documentChanges is not available
         let applied = false;
         for (const [uri, changes] of Object.entries(changesMap)) {
             if (uri !== this.documentUri) {
-                showErrorMessage(view, "Multi-file rename not supported yet");
+                showErrorMessage(view, "Multi-file edits not supported yet");
                 continue;
             }
             applied = this.applyEdits(view, changes) || applied;
         }
         return applied;
+    }
+
+    /** @deprecated Use {@link applyWorkspaceEdit}. */
+    protected async applyRenameEdit(
+        view: EditorView,
+        edit: LSP.WorkspaceEdit | null,
+    ): Promise<boolean> {
+        return this.applyWorkspaceEdit(view, edit);
     }
 }
 
@@ -1483,6 +1902,7 @@ export function languageServerWithClient(options: LanguageServerOptions) {
         rename: "F2",
         goToDefinition: "F12",
         signatureHelp: "Mod-Shift-Space",
+        codeActions: "Mod-.",
         ...options.keyboardShortcuts,
     };
 
@@ -1522,6 +1942,7 @@ export function languageServerWithClient(options: LanguageServerOptions) {
                 clientSideFiltering: options.clientSideFiltering,
                 onGoToDefinition: options.onGoToDefinition,
                 markdownRenderer: options.markdownRenderer,
+                codeActionsConfig: options.codeActionsConfig,
             }),
     );
     const getPlugin = (view: EditorView) => view.plugin(lspViewPlugin);
@@ -1556,6 +1977,24 @@ export function languageServerWithClient(options: LanguageServerOptions) {
                         view,
                         offsetToPos(view.state.doc, pos),
                     );
+                    return true;
+                },
+            },
+            {
+                key: shortcuts.codeActions,
+                run: (view) => {
+                    const plugin = getPlugin(view);
+                    if (!(plugin && featuresOptions.codeActionsEnabled))
+                        return false;
+
+                    plugin
+                        .showCodeActionsMenu(view)
+                        .catch((error) =>
+                            showErrorMessage(
+                                view,
+                                `Code actions failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+                            ),
+                        );
                     return true;
                 },
             },

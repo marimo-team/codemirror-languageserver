@@ -707,9 +707,7 @@ describe("LanguageServerPlugin", () => {
             });
 
             // Avoid real code-action requests during diagnostic processing
-            vi.spyOn(plugin as never, "requestCodeActions").mockResolvedValue(
-                undefined,
-            );
+            mockClient.textDocumentCodeAction = vi.fn().mockResolvedValue(null);
 
             vi.clearAllMocks();
         });

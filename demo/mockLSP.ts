@@ -54,7 +54,12 @@ export class MockLSPServer {
                 referencesProvider: true,
                 documentSymbolProvider: true,
                 codeActionProvider: {
-                    codeActionKinds: ["quickfix"],
+                    codeActionKinds: [
+                        "quickfix",
+                        "refactor.rewrite",
+                        "refactor.extract",
+                    ],
+                    resolveProvider: true,
                 },
                 renameProvider: {
                     prepareProvider: true,
@@ -354,22 +359,86 @@ export class MockLSPServer {
     public async codeAction(
         params: LSP.CodeActionParams,
     ): Promise<LSP.CodeAction[]> {
-        // Return mock code actions for diagnostics
-        return params.context.diagnostics.map((diagnostic) => ({
-            title: `Fix: ${diagnostic.message}`,
-            kind: "quickfix",
-            diagnostics: [diagnostic],
+        const quickFixes: LSP.CodeAction[] = params.context.diagnostics.map(
+            (diagnostic) => ({
+                title: `Fix: ${diagnostic.message}`,
+                kind: "quickfix",
+                diagnostics: [diagnostic],
+                edit: {
+                    changes: {
+                        [params.textDocument.uri]: [
+                            {
+                                range: diagnostic.range,
+                                newText: "/* Fixed */",
+                            },
+                        ],
+                    },
+                },
+            }),
+        );
+
+        // Refactors not tied to any diagnostic
+        const refactors: LSP.CodeAction[] = [
+            {
+                title: "Convert line to uppercase",
+                kind: "refactor.rewrite",
+                // No edit here: the client must call codeAction/resolve
+                data: {
+                    uri: params.textDocument.uri,
+                    line: params.range.start.line,
+                },
+            },
+            {
+                title: "Extract function",
+                kind: "refactor.extract",
+                disabled: { reason: "Not extractable in the mock server" },
+            },
+        ];
+
+        const actions = [...quickFixes, ...refactors];
+        const only = params.context.only;
+        if (only && only.length > 0) {
+            return actions.filter(
+                (action) =>
+                    action.kind &&
+                    only.some(
+                        (kind) =>
+                            action.kind === kind ||
+                            action.kind?.startsWith(`${kind}.`),
+                    ),
+            );
+        }
+        return actions;
+    }
+
+    public async codeActionResolve(
+        action: LSP.CodeAction,
+    ): Promise<LSP.CodeAction> {
+        const data = action.data as { uri?: string; line?: number } | undefined;
+        if (!data?.uri || data.line == null) {
+            return action;
+        }
+        const text = this.documents.get(data.uri) ?? "";
+        const lineText = text.split("\n")[data.line] ?? "";
+        return {
+            ...action,
             edit: {
                 changes: {
-                    [params.textDocument.uri]: [
+                    [data.uri]: [
                         {
-                            range: diagnostic.range,
-                            newText: "/* Fixed */",
+                            range: {
+                                start: { line: data.line, character: 0 },
+                                end: {
+                                    line: data.line,
+                                    character: lineText.length,
+                                },
+                            },
+                            newText: lineText.toUpperCase(),
                         },
                     ],
                 },
             },
-        }));
+        };
     }
 
     // Default signature help data that can be reused

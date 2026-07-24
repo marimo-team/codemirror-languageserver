@@ -91,6 +91,8 @@ class MockTransport implements Transport {
                     return reply(await server.rename(params));
                 case "textDocument/codeAction":
                     return reply(await server.codeAction(params));
+                case "codeAction/resolve":
+                    return reply(await server.codeActionResolve(params));
                 case "textDocument/signatureHelp":
                     return reply(await server.signatureHelp(params));
             }
@@ -122,6 +124,7 @@ const SAMPLE = `// CodeMirror LSP Demo (in-memory mock server)
 // 2. Press F2 to rename
 // 3. Ctrl/Cmd+Click for definition
 // 4. Type 'console.' for completion
+// 5. Press Ctrl/Cmd+. for code actions (try "Convert line to uppercase")
 
 function example() {
     console.log("Hello, World!");

@@ -74,6 +74,7 @@ const view = new EditorView({
 - `F2` - Rename symbol under cursor
 - `Ctrl/Cmd + Click` - Go to definition
 - `Ctrl/Cmd + Space` - Trigger completion manually
+- `Ctrl/Cmd + .` - Open the code action menu at the cursor/selection
 
 ## Advanced Configuration
 
@@ -96,6 +97,52 @@ shown with a strikethrough by default. Override with:
 .cm-tooltip-autocomplete li.cm-deprecated .cm-completionLabel {
   text-decoration: line-through;
   opacity: 0.7;
+}
+```
+
+### Code Actions
+
+Pressing `Ctrl/Cmd + .` (configurable via `keyboardShortcuts.codeActions`)
+requests code actions for the current selection — including refactors and
+source actions not tied to a diagnostic — and shows them in a small menu at
+the cursor. Actions the server provides lazily (without an edit) are resolved
+via `codeAction/resolve` before being applied.
+
+Hosts can replace the built-in menu with their own UI:
+
+```typescript
+const ls = languageServer({
+  // ...
+  codeActionsConfig: {
+    renderMenu: (actions, apply) => {
+      // Render your own menu; call apply(action) with the chosen action.
+      myMenu.show(actions.map((a) => ({
+        label: a.title,
+        onSelect: () => apply(a),
+      })));
+    },
+  },
+});
+```
+
+Custom entry points (e.g. an "Organize imports" button) can request filtered
+actions directly through the plugin:
+
+```typescript
+import { getLanguageServerPlugin } from '@marimo-team/codemirror-languageserver';
+
+const plugin = getLanguageServerPlugin(view);
+if (plugin) {
+  const wholeDocument = {
+    start: { line: 0, character: 0 },
+    end: { line: view.state.doc.lines - 1, character: 0 },
+  };
+  const actions = await plugin.requestCodeActions(view, wholeDocument, [
+    'source.organizeImports',
+  ]);
+  if (actions?.[0]) {
+    await plugin.applyCodeAction(actions[0]);
+  }
 }
 ```
 
