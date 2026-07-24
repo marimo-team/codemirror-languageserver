@@ -2,165 +2,115 @@ import { javascript } from "@codemirror/lang-javascript";
 import { lintGutter } from "@codemirror/lint";
 import { EditorState } from "@codemirror/state";
 import { EditorView, tooltips } from "@codemirror/view";
-import type {
-    IJSONRPCData,
-    IJSONRPCNotification,
-    IJSONRPCResponse,
-    JSONRPCRequestData,
-} from "@open-rpc/client-js/build/Request";
-import { Transport } from "@open-rpc/client-js/build/transports/Transport";
 import { basicSetup } from "codemirror";
-import { LanguageServerClient, languageServerWithClient } from "../../src";
+import {
+    type JSONRPCMessage,
+    LanguageServerClient,
+    type Transport,
+    languageServerWithClient,
+} from "../../src";
 import { MockLSPServer } from "../mockLSP";
 
-// Mock WebSocket-like bridge to the in-memory LSP server.
-class MockWebSocket {
-    private server: MockLSPServer;
-    private onMessageCallback?: (data: IJSONRPCResponse) => void;
-    private onNotificationCallback?: (data: IJSONRPCNotification) => void;
-    private onErrorCallback?: (data: IJSONRPCNotification) => void;
+/**
+ * A {@link Transport} that routes JSON-RPC frames to an in-memory
+ * {@link MockLSPServer} and delivers its results (and diagnostics) back to the
+ * client. Requests are dispatched by method; notifications with no matching
+ * handler are simply ignored.
+ */
+class MockTransport implements Transport {
+    private readonly handlers = new Set<(message: JSONRPCMessage) => void>();
 
-    constructor(server: MockLSPServer) {
-        this.server = server;
-        this.server.setOnDiagnostics((params) => {
-            if (this.onNotificationCallback) {
-                this.onNotificationCallback({
-                    jsonrpc: "2.0",
-                    method: "textDocument/publishDiagnostics",
-                    params,
-                });
-            }
+    constructor(private readonly server: MockLSPServer) {
+        server.setOnDiagnostics((params) => {
+            this.emit({
+                jsonrpc: "2.0",
+                method: "textDocument/publishDiagnostics",
+                params,
+            });
         });
     }
 
-    send(data: IJSONRPCData) {
-        const request = data;
-        const { method, id: _id, params } = request.request;
-        // biome-ignore lint/suspicious/noExplicitAny: RPC params are dynamic.
-        const anyParams = params as any;
-        const id = _id ?? "_";
-
-        if (method === "initialize") {
-            return this.respond(id, this.server.initialize());
-        }
-        if (method === "textDocument/didOpen") {
-            return this.server.didOpenTextDocument(anyParams);
-        }
-        if (method === "textDocument/didChange") {
-            return this.server.didChangeTextDocument(anyParams);
-        }
-        if (method === "textDocument/completion") {
-            return this.server
-                .completion(anyParams)
-                .then((result) => this.respond(id, result));
-        }
-        if (method === "completionItem/resolve") {
-            return this.server
-                .completionResolve(anyParams)
-                .then((result) => this.respond(id, result));
-        }
-        if (method === "textDocument/hover") {
-            return this.server
-                .hover(anyParams)
-                .then((result) => this.respond(id, result));
-        }
-        if (method === "textDocument/definition") {
-            return this.server
-                .definition(anyParams)
-                .then((result) => this.respond(id, result));
-        }
-        if (method === "textDocument/prepareRename") {
-            return this.server
-                .prepareRename(anyParams)
-                .then((result) => this.respond(id, result));
-        }
-        if (method === "textDocument/rename") {
-            return this.server
-                .rename(anyParams)
-                .then((result) => this.respond(id, result));
-        }
-        if (method === "textDocument/codeAction") {
-            return this.server
-                .codeAction(anyParams)
-                .then((result) => this.respond(id, result));
-        }
-        if (method === "textDocument/signatureHelp") {
-            return this.server
-                .signatureHelp(anyParams)
-                .then((result) => this.respond(id, result));
-        }
-    }
-
-    addEventListener(
-        event: string,
-        callback: (data: IJSONRPCResponse | IJSONRPCNotification) => void,
-    ) {
-        if (event === "notification") {
-            this.onNotificationCallback = callback;
-        }
-        if (event === "error") {
-            this.onErrorCallback = callback;
-        }
-        if (event === "message") {
-            this.onMessageCallback = callback;
-        }
-    }
-
-    private respond(id: string | number, result: IJSONRPCResponse["result"]) {
-        const body: IJSONRPCResponse = {
-            jsonrpc: "2.0",
-            id,
-            result,
-        };
-        if (this.onMessageCallback) {
-            this.onMessageCallback(body);
-        }
-        return body;
-    }
-}
-
-class MockTransport extends Transport {
-    private callbacks: Map<
-        string,
-        ((data: IJSONRPCResponse | IJSONRPCNotification) => void)[]
-    > = new Map();
-
-    constructor(private socket: MockWebSocket) {
-        super();
-    }
-
-    connect() {
+    connect(): Promise<void> {
         return Promise.resolve();
     }
 
-    send(data: IJSONRPCData) {
-        return this.socket.send(data);
+    send(message: JSONRPCMessage): void {
+        void this.dispatch(message);
     }
 
-    subscribe(
-        event: string,
-        callback: (data: IJSONRPCResponse | IJSONRPCNotification) => void,
-    ) {
-        const callbacks = this.callbacks.get(event) || [];
-        callbacks.push(callback);
-        this.callbacks.set(event, callbacks);
-        this.socket.addEventListener(event, (data) => {
-            for (const cb of callbacks) {
-                cb(data);
-            }
-        });
+    onMessage(handler: (message: JSONRPCMessage) => void): () => void {
+        this.handlers.add(handler);
+        return () => {
+            this.handlers.delete(handler);
+        };
     }
 
-    async sendData(data: JSONRPCRequestData) {
-        const body = await this.socket.send(data as IJSONRPCData);
-        if (body) {
-            return "result" in body ? body.result : undefined;
+    close(): void {
+        this.handlers.clear();
+    }
+
+    private emit(message: JSONRPCMessage): void {
+        for (const handler of this.handlers) {
+            handler(message);
         }
-        return body;
     }
 
-    close() {
-        this.callbacks.clear();
+    private async dispatch(message: JSONRPCMessage): Promise<void> {
+        if (!("method" in message)) {
+            return; // responses from the client (server requests) are ignored
+        }
+        const server = this.server;
+        // biome-ignore lint/suspicious/noExplicitAny: RPC params are dynamic.
+        const params = (message as any).params;
+        const id = "id" in message ? message.id : undefined;
+        const reply = (result: unknown) => {
+            if (id !== undefined) {
+                this.emit({ jsonrpc: "2.0", id, result });
+            }
+        };
+
+        try {
+            switch (message.method) {
+                case "initialize":
+                    return reply(server.initialize());
+                case "textDocument/didOpen":
+                    return void server.didOpenTextDocument(params);
+                case "textDocument/didChange":
+                    return void server.didChangeTextDocument(params);
+                case "textDocument/completion":
+                    return reply(await server.completion(params));
+                case "completionItem/resolve":
+                    return reply(await server.completionResolve(params));
+                case "textDocument/hover":
+                    return reply(await server.hover(params));
+                case "textDocument/definition":
+                    return reply(await server.definition(params));
+                case "textDocument/prepareRename":
+                    return reply(await server.prepareRename(params));
+                case "textDocument/rename":
+                    return reply(await server.rename(params));
+                case "textDocument/codeAction":
+                    return reply(await server.codeAction(params));
+                case "textDocument/signatureHelp":
+                    return reply(await server.signatureHelp(params));
+            }
+        } catch (error) {
+            // Settle failed requests with a JSON-RPC error instead of letting
+            // them hang until the client's timeout.
+            if (id !== undefined) {
+                this.emit({
+                    jsonrpc: "2.0",
+                    id,
+                    error: {
+                        code: -32603,
+                        message:
+                            error instanceof Error
+                                ? error.message
+                                : String(error),
+                    },
+                });
+            }
+        }
     }
 }
 
@@ -185,8 +135,7 @@ function example() {
  */
 export function mountMockDemo(container: HTMLElement): () => void {
     const mockServer = new MockLSPServer();
-    const mockSocket = new MockWebSocket(mockServer);
-    const mockTransport = new MockTransport(mockSocket);
+    const mockTransport = new MockTransport(mockServer);
 
     const controls = document.createElement("div");
     controls.className = "demo-controls";

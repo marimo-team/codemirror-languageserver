@@ -20,5 +20,10 @@
         "outDir": "./dist"
     },
     "include": ["./src"],
-    "exclude": ["./demo", "./src/**/*.test.ts"]
+    "exclude": [
+        "./demo",
+        "./src/**/*.test.ts",
+        "./src/testing",
+        "./src/__tests__"
+    ]
 }

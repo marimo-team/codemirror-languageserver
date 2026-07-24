@@ -1,55 +1,50 @@
-import { getNotifications } from "@open-rpc/client-js/build/Request";
-import type {
-    IJSONRPCData,
-    JSONRPCRequestData,
-} from "@open-rpc/client-js/build/Request";
-import { Transport } from "@open-rpc/client-js/build/transports/Transport";
 import type * as LSP from "vscode-languageserver-protocol";
-import { LanguageServerClient } from "../../src";
+import {
+    type JSONRPCMessage,
+    LanguageServerClient,
+    type Transport,
+} from "../../src";
 
 /**
- * An `@open-rpc/client-js` transport that speaks JSON-RPC to a Web Worker via
- * `postMessage`. It mirrors the built-in `PostMessageWindowTransport`: every
- * inbound message is fed to the request manager (which matches responses by id
- * and dispatches notifications), and outbound requests are posted verbatim.
- *
- * Notifications (`initialized`, `textDocument/didOpen`, `textDocument/didChange`)
- * have no id, so `settlePendingRequest` resolves their `sendData` promise
- * immediately — the client never waits on the worker for a fire-and-forget call.
+ * A {@link Transport} that speaks JSON-RPC to a Web Worker via `postMessage`.
+ * Structured clone carries the message objects verbatim, so — unlike a socket
+ * transport — there is no serialization step: outbound frames are posted as-is
+ * and inbound `MessageEvent` data is handed to the client directly.
  */
-export class WorkerTransport extends Transport {
-    private worker: Worker;
+export class WorkerTransport implements Transport {
+    private readonly worker: Worker;
+    private readonly handlers = new Set<(message: JSONRPCMessage) => void>();
 
-    private messageHandler = (event: MessageEvent) => {
-        this.transportRequestManager.resolveResponse(
-            JSON.stringify(event.data),
-        );
+    private readonly onWorkerMessage = (event: MessageEvent) => {
+        for (const handler of this.handlers) {
+            handler(event.data as JSONRPCMessage);
+        }
     };
 
     constructor(worker: Worker) {
-        super();
         this.worker = worker;
     }
 
     connect(): Promise<void> {
-        this.worker.addEventListener("message", this.messageHandler);
+        this.worker.addEventListener("message", this.onWorkerMessage);
         return Promise.resolve();
     }
 
-    close(): void {
-        this.worker.removeEventListener("message", this.messageHandler);
-        this.worker.terminate();
+    send(message: JSONRPCMessage): void {
+        this.worker.postMessage(message);
     }
 
-    async sendData(
-        data: JSONRPCRequestData,
-        timeout: number | null = null,
-    ): Promise<unknown> {
-        const promise = this.transportRequestManager.addRequest(data, timeout);
-        const notifications = getNotifications(data);
-        this.worker.postMessage((data as IJSONRPCData).request);
-        this.transportRequestManager.settlePendingRequest(notifications);
-        return promise;
+    onMessage(handler: (message: JSONRPCMessage) => void): () => void {
+        this.handlers.add(handler);
+        return () => {
+            this.handlers.delete(handler);
+        };
+    }
+
+    close(): void {
+        this.worker.removeEventListener("message", this.onWorkerMessage);
+        this.handlers.clear();
+        this.worker.terminate();
     }
 }
 

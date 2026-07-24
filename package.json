@@ -42,29 +42,29 @@
     "license": "BSD-3-Clause",
     "packageManager": "pnpm@10.33.4",
     "peerDependencies": {
+        "@codemirror/autocomplete": "^6",
+        "@codemirror/lint": "^6",
         "@codemirror/state": "^6",
         "@codemirror/view": "^6"
     },
     "devDependencies": {
+        "@astral-sh/ruff-wasm-web": "^0.15.20",
         "@biomejs/biome": "1.9.4",
+        "@codemirror/autocomplete": "^6.18.4",
         "@codemirror/lang-javascript": "^6.2.2",
+        "@codemirror/lang-python": "^6.2.1",
+        "@codemirror/lint": "^6.8.4",
         "@codemirror/state": "^6.5.2",
         "@codemirror/view": "^6.36.2",
+        "@typescript/vfs": "^1.6.4",
         "@vitest/coverage-v8": "3.2.4",
         "codemirror": "6.0.2",
-        "events": "3.3.0",
         "jsdom": "26.1.0",
         "typescript": "5.9.3",
         "vite": "6.4.2",
         "vitest": "3.2.4"
     },
     "dependencies": {
-        "@astral-sh/ruff-wasm-web": "^0.15.20",
-        "@codemirror/autocomplete": "^6.18.4",
-        "@codemirror/lang-python": "^6.2.1",
-        "@codemirror/lint": "^6.8.4",
-        "@open-rpc/client-js": "^1.8.1",
-        "@typescript/vfs": "^1.6.4",
         "marked": "^15.0.6",
         "vscode-languageserver-protocol": "^3.17.5"
     }

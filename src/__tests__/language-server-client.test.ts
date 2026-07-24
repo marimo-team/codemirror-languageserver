@@ -1,59 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LanguageServerPlugin } from "../plugin.js";
 
-import type Client from "@open-rpc/client-js";
-import { Transport } from "@open-rpc/client-js/build/transports/Transport.js";
 import type * as LSP from "vscode-languageserver-protocol";
+import type { JSONRPCClient } from "../jsonrpc.js";
 import {
     LanguageServerClient,
     type LanguageServerClientOptions,
 } from "../lsp.js";
-
-// Create a simple mock transport
-class MockTransport extends Transport {
-    sendData = vi.fn().mockResolvedValue({});
-    subscribe = vi.fn();
-    unsubscribe = vi.fn();
-    connect = vi.fn().mockResolvedValue({});
-    close = vi.fn();
-
-    emit = vi.fn();
-    addListener = vi.fn();
-    on = vi.fn();
-    once = vi.fn();
-    removeListener = vi.fn();
-    off = vi.fn();
-    removeAllListeners = vi.fn();
-    setMaxListeners = vi.fn();
-    getMaxListeners = vi.fn();
-    listeners = vi.fn();
-    rawListeners = vi.fn();
-    listenerCount = vi.fn();
-    prependListener = vi.fn();
-    prependOnceListener = vi.fn();
-    eventNames = vi.fn();
-    parseData = vi.fn();
-}
-
-// Mock the Client from @open-rpc/client-js
-vi.mock("@open-rpc/client-js", () => ({
-    Client: vi.fn().mockImplementation(() => ({
-        request: vi.fn().mockResolvedValue({}),
-        notify: vi.fn().mockResolvedValue(undefined),
-        close: vi.fn(),
-        onNotification: vi.fn(),
-        onRequest: vi.fn(),
-    })),
-    RequestManager: vi.fn().mockImplementation(() => ({
-        requestTimeoutMs: 10000,
-    })),
-}));
+import { FakeTransport } from "../testing/fakeTransport.js";
 
 describe("LanguageServerClient", () => {
-    let mockTransport: MockTransport;
+    let mockTransport: FakeTransport;
 
     beforeEach(() => {
-        mockTransport = new MockTransport();
+        mockTransport = new FakeTransport();
     });
 
     describe("constructor", () => {
@@ -278,7 +238,7 @@ describe("LanguageServerClient", () => {
             const mockInternalClient = {
                 close: vi.fn(),
                 notify: vi.fn(),
-            } as unknown as Client;
+            } as unknown as JSONRPCClient;
             // @ts-expect-error: Accessing private method for test purposes
             client.client = mockInternalClient;
 
