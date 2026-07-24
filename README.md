@@ -146,6 +146,38 @@ if (plugin) {
 }
 ```
 
+### Diagnostics
+
+Diagnostics map the full LSP payload, not just the message and severity:
+
+- **Severity** — `Hint` diagnostics use CodeMirror's native `"hint"` severity.
+- **Tags** — `Unnecessary` and `Deprecated` diagnostics add the mark classes
+  `cm-lsp-unnecessary` (faded) and `cm-lsp-deprecated` (struck through). A
+  base theme ships these styles out of the box; override them with your own
+  theme:
+
+  ```css
+  .cm-lsp-unnecessary { opacity: 0.6; }
+  .cm-lsp-deprecated { text-decoration: line-through; }
+  ```
+
+- **Related information** — "declared here" / "first defined here" entries are
+  rendered below the message. Entries in the current document are clickable and
+  move the selection; entries in other documents invoke the `onShowLocation`
+  callback so the host can open them:
+
+  ```typescript
+  const ls = languageServer({
+    // ...
+    onShowLocation: ({ uri, range, isExternalDocument }) => {
+      // Open `uri` and reveal `range` in your app
+    },
+  });
+  ```
+
+- **Code documentation links** — when the server provides a `codeDescription`
+  (e.g. ESLint or ruff rule docs), the diagnostic renders a link to it.
+
 ### Sharing Client Across Multiple Instances
 
 ```typescript
