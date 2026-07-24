@@ -42,6 +42,11 @@ vi.mock("../utils.js", () => ({
         return { line: 0, character: offset };
     }),
     eventsFromChangeSet: vi.fn().mockReturnValue([]),
+    diagnosticMessageToString: vi
+        .fn()
+        .mockImplementation((message) =>
+            typeof message === "string" ? message : message.value,
+        ),
     renderMarkdown: vi.fn().mockReturnValue(""),
     renderDocumentation: vi.fn().mockImplementation((element, contents) => {
         element.textContent =

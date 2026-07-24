@@ -236,6 +236,17 @@ export function isLSPMarkupContent(
     return (contents as LSP.MarkupContent).kind !== undefined;
 }
 
+/**
+ * Normalizes a diagnostic message to a plain string. LSP 3.18 widened
+ * `Diagnostic.message` to `string | MarkupContent`; we only render plain
+ * strings, so unwrap the `.value` when a MarkupContent is provided.
+ */
+export function diagnosticMessageToString(
+    message: string | LSP.MarkupContent,
+): string {
+    return typeof message === "string" ? message : message.value;
+}
+
 function isLSPMarkedStringObject(
     contents: LSP.MarkupContent | LSP.MarkedString | LSP.MarkedString[],
 ): contents is { language: string; value: string } {
