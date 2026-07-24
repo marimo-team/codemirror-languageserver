@@ -230,6 +230,18 @@ describe("notify and respond", () => {
         ).resolves.toBeUndefined();
         expect(transport.sent).toEqual([]);
     });
+
+    it("does not send a notification queued before connect once closed mid-connect", async () => {
+        const transport = new ControlledTransport(false);
+        const client = new JSONRPCClient(transport);
+
+        const notified = client.notify("x", {});
+        client.close(); // tear down before the connection resolves
+        transport.openConnection();
+        await notified;
+
+        expect(transport.sent).toEqual([]);
+    });
 });
 
 describe("inbound routing", () => {

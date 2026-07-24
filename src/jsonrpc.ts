@@ -228,12 +228,17 @@ export class JSONRPCClient {
         this.transport.close();
     }
 
-    /** Send once the transport is connected; a no-op once closed. */
+    /** Send once the transport is connected; a no-op if closed meanwhile. */
     private dispatch(message: JSONRPCMessage): Promise<void> {
         if (this.closed) {
             return Promise.resolve();
         }
-        return this.connected.then(() => this.transport.send(message));
+        return this.connected.then(() => {
+            // close() may have torn down the transport while connecting.
+            if (!this.closed) {
+                this.transport.send(message);
+            }
+        });
     }
 
     private settle(id: RequestId, handle: (pending: PendingRequest) => void) {
