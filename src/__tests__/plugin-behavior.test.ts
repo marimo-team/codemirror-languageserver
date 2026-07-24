@@ -5,7 +5,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type * as LSP from "vscode-languageserver-protocol";
 import { LanguageServerClient } from "../lsp.js";
 import type { FeatureOptions } from "../lsp.js";
-import { LanguageServerPlugin, getLanguageServerPlugin } from "../plugin.js";
+import {
+    LanguageServerPlugin,
+    getLanguageServerPlugin,
+    relatedLocationAnchors,
+} from "../plugin.js";
 
 const featureOptions: Required<FeatureOptions> = {
     diagnosticsEnabled: true,
@@ -83,6 +87,14 @@ function countDiagnostics(view: EditorView): { from: number; to: number }[] {
     const found: { from: number; to: number }[] = [];
     forEachDiagnostic(view.state, (_d, from, to) => {
         found.push({ from, to });
+    });
+    return found;
+}
+
+function collectDiagnostics(view: EditorView) {
+    const found: import("@codemirror/lint").Diagnostic[] = [];
+    forEachDiagnostic(view.state, (diagnostic) => {
+        found.push(diagnostic);
     });
     return found;
 }
@@ -454,6 +466,284 @@ describe("diagnostics processing", () => {
         });
         const remaining = countDiagnostics(view);
         expect(remaining).toEqual([{ from: 0, to: 2 }]);
+    });
+});
+
+describe("diagnostics polish", () => {
+    const range = {
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: 5 },
+    };
+
+    it("maps LSP Hint severity to CodeMirror's native hint", async () => {
+        const view = createView("hello");
+        const plugin = createPlugin(view);
+
+        await plugin.processDiagnostics({
+            uri: "file:///test.ts",
+            diagnostics: [
+                // DiagnosticSeverity.Hint === 4
+                { range, message: "a hint", severity: 4 },
+            ],
+        });
+
+        const [diagnostic] = collectDiagnostics(view);
+        expect(diagnostic?.severity).toBe("hint");
+    });
+
+    it("adds tag mark classes for Unnecessary and Deprecated diagnostics", async () => {
+        const view = createView("hello");
+        const plugin = createPlugin(view);
+
+        await plugin.processDiagnostics({
+            uri: "file:///test.ts",
+            diagnostics: [
+                // DiagnosticTag.Unnecessary === 1, DiagnosticTag.Deprecated === 2
+                { range, message: "unused", tags: [1] },
+                {
+                    range: {
+                        start: { line: 0, character: 0 },
+                        end: { line: 0, character: 3 },
+                    },
+                    message: "deprecated",
+                    tags: [2],
+                },
+            ],
+        });
+
+        const diagnostics = collectDiagnostics(view);
+        const unnecessary = diagnostics.find((d) =>
+            d.message.includes("unused"),
+        );
+        const deprecated = diagnostics.find((d) =>
+            d.message.includes("deprecated"),
+        );
+        expect(unnecessary?.markClass?.split(" ")).toContain(
+            "cm-lsp-unnecessary",
+        );
+        expect(deprecated?.markClass?.split(" ")).toContain(
+            "cm-lsp-deprecated",
+        );
+
+        // A newer publish must still be able to replace tagged diagnostics
+        await plugin.processDiagnostics({
+            uri: "file:///test.ts",
+            diagnostics: [],
+        });
+        expect(countDiagnostics(view)).toHaveLength(0);
+    });
+
+    it("passes the original diagnostic (message + data) as code-action context", async () => {
+        const client = createFakeClient({
+            capabilities: { codeActionProvider: true },
+        });
+        const view = createView("hello");
+        const plugin = new LanguageServerPlugin({
+            client,
+            documentUri: "file:///test.ts",
+            languageId: "typescript",
+            view,
+            featureOptions: { ...featureOptions, codeActionsEnabled: true },
+        });
+
+        await plugin.processDiagnostics({
+            uri: "file:///test.ts",
+            diagnostics: [
+                {
+                    range,
+                    message: "prefer const",
+                    code: "prefer-const",
+                    data: { fixId: 42 },
+                },
+            ],
+        });
+
+        expect(client.textDocumentCodeAction).toHaveBeenCalledWith(
+            expect.objectContaining({
+                context: {
+                    diagnostics: [
+                        expect.objectContaining({
+                            message: "prefer const",
+                            code: "prefer-const",
+                            data: { fixId: 42 },
+                        }),
+                    ],
+                },
+            }),
+        );
+    });
+
+    it("renders related-information entries and a code documentation link", async () => {
+        const view = createView("hello world");
+        const plugin = createPlugin(view);
+
+        await plugin.processDiagnostics({
+            uri: "file:///test.ts",
+            diagnostics: [
+                {
+                    range,
+                    message: "duplicate symbol",
+                    code: "no-dupes",
+                    codeDescription: { href: "https://example.com/no-dupes" },
+                    relatedInformation: [
+                        {
+                            location: {
+                                uri: "file:///test.ts",
+                                range: {
+                                    start: { line: 0, character: 6 },
+                                    end: { line: 0, character: 11 },
+                                },
+                            },
+                            message: "first defined here",
+                        },
+                    ],
+                },
+            ],
+        });
+
+        const [diagnostic] = collectDiagnostics(view);
+        const dom = diagnostic?.renderMessage?.(view) as HTMLElement;
+
+        // Documentation link
+        const link = dom.querySelector<HTMLAnchorElement>(
+            "a.cm-diagnostic-code-link",
+        );
+        expect(link?.href).toBe("https://example.com/no-dupes");
+        expect(link?.target).toBe("_blank");
+
+        // Related-information entry, clickable because it is same-document
+        const related = dom.querySelector(".cm-diagnostic-related-item");
+        expect(related?.textContent).toContain("first defined here");
+        expect(related?.textContent).toContain("file:///test.ts:1:7");
+        expect(
+            related?.classList.contains("cm-diagnostic-related-clickable"),
+        ).toBe(true);
+
+        // Clicking moves the selection to the related range
+        (related as HTMLElement).click();
+        expect(view.state.selection.main.from).toBe(6);
+        expect(view.state.selection.main.to).toBe(11);
+    });
+
+    it("does not render a documentation link for unsafe URL schemes", async () => {
+        const view = createView("hello");
+        const plugin = createPlugin(view);
+
+        await plugin.processDiagnostics({
+            uri: "file:///test.ts",
+            diagnostics: [
+                {
+                    range,
+                    message: "sketchy",
+                    code: "x",
+                    // biome-ignore lint/suspicious/noExplicitAny: intentionally hostile input
+                    codeDescription: { href: "javascript:alert(1)" } as any,
+                },
+            ],
+        });
+
+        const [diagnostic] = collectDiagnostics(view);
+        const dom = diagnostic?.renderMessage?.(view) as HTMLElement;
+        expect(dom.querySelector("a.cm-diagnostic-code-link")).toBeNull();
+    });
+
+    it("keeps a same-document related link accurate after the document is edited", async () => {
+        // Register the anchor field so related positions are mapped through edits
+        const view = new EditorView({
+            state: EditorState.create({
+                doc: "hello world",
+                extensions: [relatedLocationAnchors],
+            }),
+            parent: document.createElement("div"),
+        });
+        const plugin = createPlugin(view);
+
+        await plugin.processDiagnostics({
+            uri: "file:///test.ts",
+            diagnostics: [
+                {
+                    range,
+                    message: "duplicate symbol",
+                    relatedInformation: [
+                        {
+                            location: {
+                                uri: "file:///test.ts",
+                                // "world" at offsets 6..11
+                                range: {
+                                    start: { line: 0, character: 6 },
+                                    end: { line: 0, character: 11 },
+                                },
+                            },
+                            message: "first defined here",
+                        },
+                    ],
+                },
+            ],
+        });
+
+        // Insert two characters at the start, shifting "world" to 8..13
+        view.dispatch({ changes: { from: 0, insert: "XX" } });
+
+        const [diagnostic] = collectDiagnostics(view);
+        const dom = diagnostic?.renderMessage?.(view) as HTMLElement;
+        const related = dom.querySelector<HTMLElement>(
+            ".cm-diagnostic-related-item",
+        );
+        // Displayed column reflects the mapped position
+        expect(related?.textContent).toContain("file:///test.ts:1:9");
+
+        related?.click();
+        expect(view.state.selection.main.from).toBe(8);
+        expect(view.state.selection.main.to).toBe(13);
+    });
+
+    it("invokes onShowLocation for external related-information entries", async () => {
+        const view = createView("hello");
+        const onShowLocation = vi.fn();
+        const plugin = new LanguageServerPlugin({
+            client: createFakeClient(),
+            documentUri: "file:///test.ts",
+            languageId: "typescript",
+            view,
+            featureOptions,
+            onShowLocation,
+        });
+
+        const externalRange = {
+            start: { line: 3, character: 2 },
+            end: { line: 3, character: 8 },
+        };
+        await plugin.processDiagnostics({
+            uri: "file:///test.ts",
+            diagnostics: [
+                {
+                    range,
+                    message: "imported from elsewhere",
+                    relatedInformation: [
+                        {
+                            location: {
+                                uri: "file:///other.ts",
+                                range: externalRange,
+                            },
+                            message: "declared here",
+                        },
+                    ],
+                },
+            ],
+        });
+
+        const [diagnostic] = collectDiagnostics(view);
+        const dom = diagnostic?.renderMessage?.(view) as HTMLElement;
+        const related = dom.querySelector<HTMLElement>(
+            ".cm-diagnostic-related-item",
+        );
+        related?.click();
+
+        expect(onShowLocation).toHaveBeenCalledWith({
+            uri: "file:///other.ts",
+            range: externalRange,
+            isExternalDocument: true,
+        });
     });
 });
 

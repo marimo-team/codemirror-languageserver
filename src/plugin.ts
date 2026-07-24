@@ -16,6 +16,7 @@ import {
 import {
     CompletionTriggerKind,
     DiagnosticSeverity,
+    DiagnosticTag,
     TextDocumentSaveReason,
     TextDocumentSyncKind,
 } from "vscode-languageserver-protocol";
@@ -48,6 +49,7 @@ import {
     type LanguageServerOptions,
     type LanguageServerWebsocketOptions,
     type Notification,
+    type ShowLocationResult,
 } from "./lsp.js";
 import { WebSocketTransport } from "./transport.js";
 import {
@@ -129,6 +131,94 @@ function actionAppliesToDiagnostic(
 interface DiagnosticWithLSP extends Diagnostic {
     lspDiagnostic?: LSP.Diagnostic;
 }
+
+/**
+ * Whether a server-supplied URL is safe to turn into a clickable link. Only
+ * web and mail schemes are allowed; executable schemes such as `javascript:`
+ * or `data:` are rejected so a hostile/compromised language server cannot use
+ * a diagnostic's `codeDescription` link to run script or navigate the page.
+ */
+function isSafeHref(href: string): boolean {
+    let url: URL;
+    try {
+        url = new URL(href);
+    } catch {
+        // Reject relative or malformed URLs; documentation links must be
+        // absolute.
+        return false;
+    }
+    return (
+        url.protocol === "http:" ||
+        url.protocol === "https:" ||
+        url.protocol === "mailto:"
+    );
+}
+
+/**
+ * Document offsets of a diagnostic's related-information target, kept mapped
+ * through edits so "declared here" links stay accurate.
+ */
+type RelatedAnchor = { from: number; to: number };
+
+/**
+ * Effect a plugin uses to (re)publish its related-information anchors. Anchors
+ * are keyed by `${pluginId}:${diagIndex}:${relIndex}`; publishing replaces all
+ * anchors previously owned by the same plugin.
+ */
+const setRelatedLocationAnchors = StateEffect.define<{
+    pluginId: string;
+    anchors: Map<string, RelatedAnchor>;
+}>();
+
+/**
+ * Tracks the live document offsets of same-document related-information
+ * targets. CodeMirror maps a diagnostic's own range through edits, but not the
+ * separate related-info ranges; this field maps them so the click target and
+ * displayed location stay aligned with the current document.
+ */
+export const relatedLocationAnchors = StateField.define<
+    Map<string, RelatedAnchor>
+>({
+    create: () => new Map(),
+    update(anchors, tr) {
+        let next = anchors;
+        for (const effect of tr.effects) {
+            if (effect.is(setRelatedLocationAnchors)) {
+                if (next === anchors) {
+                    next = new Map(anchors);
+                }
+                // Replace only the publishing plugin's anchors
+                for (const key of [...next.keys()]) {
+                    if (key.startsWith(`${effect.value.pluginId}:`)) {
+                        next.delete(key);
+                    }
+                }
+                for (const [key, anchor] of effect.value.anchors) {
+                    next.set(key, anchor);
+                }
+            }
+        }
+        if (tr.docChanged && next.size > 0) {
+            if (next === anchors) {
+                next = new Map(anchors);
+            }
+            // Updating existing keys' values during iteration is safe. Map the
+            // start forward and the end backward so an insertion at either
+            // boundary stays outside the anchor and it keeps covering the
+            // original target (collapse both forward for empty ranges).
+            for (const [key, anchor] of next) {
+                next.set(key, {
+                    from: tr.changes.mapPos(anchor.from, 1),
+                    to: tr.changes.mapPos(
+                        anchor.to,
+                        anchor.from === anchor.to ? 1 : -1,
+                    ),
+                });
+            }
+        }
+        return next;
+    },
+});
 
 /**
  * StateEffect for setting or clearing the signature help tooltip
@@ -254,6 +344,11 @@ export class LanguageServerPlugin implements PluginValue {
      */
     public onGoToDefinition: ((result: DefinitionResult) => void) | undefined;
     /**
+     * Callback triggered when a diagnostic's related-information entry pointing
+     * to another document is activated.
+     */
+    public onShowLocation: ((result: ShowLocationResult) => void) | undefined;
+    /**
      * Callback to render markdown content.
      */
     public markdownRenderer: (markdown: string) => string;
@@ -278,6 +373,7 @@ export class LanguageServerPlugin implements PluginValue {
         useSnippetOnCompletion?: boolean;
         clientSideFiltering?: boolean;
         onGoToDefinition?: (result: DefinitionResult) => void;
+        onShowLocation?: (result: ShowLocationResult) => void;
         markdownRenderer?: (markdown: string) => string;
         codeActionsConfig?: CodeActionsConfig;
     }) {
@@ -292,6 +388,7 @@ export class LanguageServerPlugin implements PluginValue {
             useSnippetOnCompletion = false,
             clientSideFiltering = false,
             onGoToDefinition,
+            onShowLocation,
             markdownRenderer = renderMarkdown,
             codeActionsConfig,
         } = opts;
@@ -307,6 +404,7 @@ export class LanguageServerPlugin implements PluginValue {
         this.sendIncrementalChanges = sendIncrementalChanges;
         this.featureOptions = featureOptions;
         this.onGoToDefinition = onGoToDefinition;
+        this.onShowLocation = onShowLocation;
         this.markdownRenderer = markdownRenderer;
         this.codeActionsConfig = codeActionsConfig;
         registerPlugin(view, this);
@@ -794,7 +892,7 @@ export class LanguageServerPlugin implements PluginValue {
                 [DiagnosticSeverity.Error]: "error",
                 [DiagnosticSeverity.Warning]: "warning",
                 [DiagnosticSeverity.Information]: "info",
-                [DiagnosticSeverity.Hint]: "info",
+                [DiagnosticSeverity.Hint]: "hint",
             };
 
         // Snapshot the document so ranges are resolved against the text the
@@ -832,9 +930,13 @@ export class LanguageServerPlugin implements PluginValue {
             return;
         }
 
+        // Resolved offsets of same-document related-info targets, published to
+        // relatedLocationAnchors so they are mapped through later edits
+        const relatedAnchors = new Map<string, RelatedAnchor>();
+
         const diagnostics = params.diagnostics.map(
-            (lspDiagnostic): Diagnostic | null => {
-                const { range, message, severity, code, source } =
+            (lspDiagnostic, diagIndex): Diagnostic | null => {
+                const { range, message, severity, code, source, tags } =
                     lspDiagnostic;
                 const from = posToOffset(doc, range.start);
                 const to = posToOffset(doc, range.end);
@@ -843,6 +945,31 @@ export class LanguageServerPlugin implements PluginValue {
                     // stale publish); dropping it beats misplacing it
                     return null;
                 }
+
+                // Anchor same-document related-info targets against the
+                // snapshot so their click positions survive later edits
+                lspDiagnostic.relatedInformation?.forEach(
+                    (related, relIndex) => {
+                        if (related.location.uri !== this.documentUri) {
+                            return;
+                        }
+                        const relatedFrom = posToOffset(
+                            doc,
+                            related.location.range.start,
+                        );
+                        const relatedTo = posToOffset(
+                            doc,
+                            related.location.range.end,
+                        );
+                        if (relatedFrom == null || relatedTo == null) {
+                            return;
+                        }
+                        relatedAnchors.set(
+                            `${this.pluginId}:${diagIndex}:${relIndex}`,
+                            { from: relatedFrom, to: relatedTo },
+                        );
+                    },
+                );
 
                 const codemirrorActions = allActions
                     .filter((action) =>
@@ -867,22 +994,30 @@ export class LanguageServerPlugin implements PluginValue {
                         ? `${baseSource}(${code})`
                         : baseSource;
 
+                // Faded/struck-through styling for Unnecessary/Deprecated
+                // tags. The plugin id stays first so setOwnDiagnostics can
+                // still recognize this plugin's diagnostics.
+                const markClasses = [this.pluginId];
+                if (tags?.includes(DiagnosticTag.Unnecessary)) {
+                    markClasses.push("cm-lsp-unnecessary");
+                }
+                if (tags?.includes(DiagnosticTag.Deprecated)) {
+                    markClasses.push("cm-lsp-deprecated");
+                }
+
                 const diagnostic: DiagnosticWithLSP = {
                     from,
                     to,
                     severity: severityMap[severity ?? DiagnosticSeverity.Error],
                     message: message,
-                    renderMessage: () => {
-                        const dom = document.createElement("div");
-                        if (this.allowHTMLContent) {
-                            dom.innerHTML = this.markdownRenderer(message);
-                        } else {
-                            dom.textContent = message;
-                        }
-                        return dom;
-                    },
+                    renderMessage: (view) =>
+                        this.renderDiagnosticMessage(
+                            view,
+                            lspDiagnostic,
+                            diagIndex,
+                        ),
                     source: formattedSource,
-                    markClass: this.pluginId,
+                    markClass: markClasses.join(" "),
                     actions:
                         codemirrorActions.length > 0
                             ? codemirrorActions
@@ -898,27 +1033,207 @@ export class LanguageServerPlugin implements PluginValue {
             diagnostics.filter(
                 (diagnostic): diagnostic is Diagnostic => diagnostic != null,
             ),
+            relatedAnchors,
         );
     }
 
     /**
      * Replaces this plugin's diagnostics while preserving diagnostics
-     * added by other sources (e.g. other plugins or linters)
+     * added by other sources (e.g. other plugins or linters). Also republishes
+     * this plugin's related-information anchors so they stay mapped.
      */
-    private setOwnDiagnostics(newDiagnostics: Diagnostic[]) {
+    private setOwnDiagnostics(
+        newDiagnostics: Diagnostic[],
+        relatedAnchors: Map<string, RelatedAnchor> = new Map(),
+    ) {
         const state = this.view.state;
 
         const otherDiagnostics: Diagnostic[] = [];
         forEachDiagnostic(state, (diagnostic, from, to) => {
-            if (diagnostic.markClass !== this.pluginId) {
+            if (!this.ownsDiagnostic(diagnostic)) {
                 // Use the mapped positions in case the document changed
                 otherDiagnostics.push({ ...diagnostic, from, to });
             }
         });
 
-        this.view.dispatch(
-            setDiagnostics(state, [...otherDiagnostics, ...newDiagnostics]),
+        const spec = setDiagnostics(state, [
+            ...otherDiagnostics,
+            ...newDiagnostics,
+        ]);
+        const specEffects = spec.effects;
+        const effects = Array.isArray(specEffects)
+            ? [...specEffects]
+            : specEffects
+              ? [specEffects]
+              : [];
+        effects.push(
+            setRelatedLocationAnchors.of({
+                pluginId: this.pluginId,
+                anchors: relatedAnchors,
+            }),
         );
+
+        this.view.dispatch({ ...spec, effects });
+    }
+
+    /**
+     * Whether a diagnostic was produced by this plugin. Diagnostics carry the
+     * plugin id in their `markClass`, possibly alongside tag classes such as
+     * `cm-lsp-deprecated`, so match on the space-separated tokens.
+     */
+    private ownsDiagnostic(diagnostic: Diagnostic): boolean {
+        return (
+            diagnostic.markClass?.split(" ").includes(this.pluginId) ?? false
+        );
+    }
+
+    /**
+     * Builds the rendered message DOM for a diagnostic: the message body, an
+     * optional documentation link (from `codeDescription`), and an optional
+     * list of related-information entries ("declared here", etc.).
+     */
+    private renderDiagnosticMessage(
+        view: EditorView,
+        diagnostic: LSP.Diagnostic,
+        diagIndex: number,
+    ): HTMLElement {
+        const { message, code, source, codeDescription, relatedInformation } =
+            diagnostic;
+
+        const dom = document.createElement("div");
+        dom.classList.add("cm-lsp-diagnostic-message");
+
+        const body = document.createElement("div");
+        if (this.allowHTMLContent) {
+            body.innerHTML = this.markdownRenderer(message);
+        } else {
+            body.textContent = message;
+        }
+        dom.appendChild(body);
+
+        // Link out to the rule/error documentation when the server provides a
+        // safe (http/https/mailto) URL
+        if (codeDescription?.href && isSafeHref(codeDescription.href)) {
+            const baseSource = source || this.languageId;
+            const label =
+                code != null && code !== ""
+                    ? `${baseSource}(${code})`
+                    : baseSource;
+            const link = document.createElement("a");
+            link.className = "cm-diagnostic-code-link";
+            link.href = codeDescription.href;
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+            link.textContent = label;
+            dom.appendChild(link);
+        }
+
+        // "declared here" / "first defined here" links
+        if (relatedInformation && relatedInformation.length > 0) {
+            const relatedList = document.createElement("div");
+            relatedList.className = "cm-diagnostic-related";
+            relatedInformation.forEach((related, relIndex) => {
+                relatedList.appendChild(
+                    this.renderRelatedInformation(
+                        view,
+                        related,
+                        `${this.pluginId}:${diagIndex}:${relIndex}`,
+                    ),
+                );
+            });
+            dom.appendChild(relatedList);
+        }
+
+        return dom;
+    }
+
+    /**
+     * Renders a single related-information entry. Same-document entries are
+     * clickable and move the selection; external entries are clickable only
+     * when an {@link onShowLocation} host callback is available.
+     *
+     * For same-document entries the live target offset is read from
+     * {@link relatedLocationAnchors} (mapped through edits) and only falls back
+     * to the original LSP range when no anchor is available.
+     */
+    private renderRelatedInformation(
+        view: EditorView,
+        related: LSP.DiagnosticRelatedInformation,
+        anchorKey: string,
+    ): HTMLElement {
+        const { location, message } = related;
+        const { uri, range } = location;
+        const isExternalDocument = uri !== this.documentUri;
+
+        // Current, edit-mapped offsets for same-document targets
+        const anchoredOffsets = (): RelatedAnchor | null => {
+            if (isExternalDocument) {
+                return null;
+            }
+            const anchor = view.state
+                .field(relatedLocationAnchors, false)
+                ?.get(anchorKey);
+            if (anchor) {
+                return anchor;
+            }
+            const from = posToOffset(view.state.doc, range.start);
+            if (from == null) {
+                return null;
+            }
+            return { from, to: posToOffset(view.state.doc, range.end) ?? from };
+        };
+
+        const entry = document.createElement("div");
+        entry.className = "cm-diagnostic-related-item";
+
+        const messageSpan = document.createElement("span");
+        messageSpan.className = "cm-diagnostic-related-message";
+        messageSpan.textContent = message;
+        entry.appendChild(messageSpan);
+
+        // Prefer the current mapped position for the displayed line:col so the
+        // label matches where a click would land
+        const offsets = anchoredOffsets();
+        const displayPos =
+            offsets && !isExternalDocument
+                ? offsetToPos(view.state.doc, offsets.from)
+                : range.start;
+        const locationSpan = document.createElement("span");
+        locationSpan.className = "cm-diagnostic-related-location";
+        locationSpan.textContent = ` ${uri}:${displayPos.line + 1}:${displayPos.character + 1}`;
+        entry.appendChild(locationSpan);
+
+        const actionable = !isExternalDocument || Boolean(this.onShowLocation);
+        if (actionable) {
+            entry.classList.add("cm-diagnostic-related-clickable");
+            entry.setAttribute("role", "button");
+            entry.tabIndex = 0;
+
+            const activate = () => {
+                if (isExternalDocument) {
+                    this.onShowLocation?.({ uri, range, isExternalDocument });
+                    return;
+                }
+                const current = anchoredOffsets();
+                if (current == null) {
+                    return;
+                }
+                view.dispatch({
+                    selection: { anchor: current.from, head: current.to },
+                    scrollIntoView: true,
+                });
+            };
+
+            entry.addEventListener("click", activate);
+            entry.addEventListener("keydown", (event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    activate();
+                }
+            });
+        }
+
+        return entry;
     }
 
     private clearDiagnostics() {
@@ -1941,6 +2256,7 @@ export function languageServerWithClient(options: LanguageServerOptions) {
                 useSnippetOnCompletion: options.useSnippetOnCompletion,
                 clientSideFiltering: options.clientSideFiltering,
                 onGoToDefinition: options.onGoToDefinition,
+                onShowLocation: options.onShowLocation,
                 markdownRenderer: options.markdownRenderer,
                 codeActionsConfig: options.codeActionsConfig,
             }),
@@ -1949,6 +2265,31 @@ export function languageServerWithClient(options: LanguageServerOptions) {
 
     // Create base extensions array
     const extensions: Extension[] = [lspViewPlugin];
+
+    // Out-of-the-box styling for diagnostic tags and related-information links,
+    // plus the field that keeps related-info click targets mapped through
+    // edits. Hosts can override these classes via their own theme.
+    if (featuresOptions.diagnosticsEnabled) {
+        extensions.push(
+            relatedLocationAnchors,
+            EditorView.baseTheme({
+                ".cm-lsp-unnecessary": { opacity: "0.6" },
+                ".cm-lsp-deprecated": { textDecoration: "line-through" },
+                ".cm-diagnostic-related": {
+                    marginTop: "4px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "2px",
+                },
+                ".cm-diagnostic-related-clickable": { cursor: "pointer" },
+                ".cm-diagnostic-related-location": { opacity: "0.7" },
+                ".cm-diagnostic-code-link": {
+                    display: "inline-block",
+                    marginTop: "4px",
+                },
+            }),
+        );
+    }
 
     // Add shortcuts
     extensions.push(

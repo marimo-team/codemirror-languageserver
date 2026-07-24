@@ -179,6 +179,20 @@ export interface DefinitionResult {
     isExternalDocument: boolean;
 }
 
+/**
+ * A source location the host is asked to reveal, e.g. a diagnostic's
+ * "declared here" related-information link that points outside the current
+ * document.
+ */
+export interface ShowLocationResult {
+    /** URI of the document containing the location */
+    uri: string;
+    /** Range within the document to reveal */
+    range: LSP.Range;
+    /** Whether the location is in a different file than the current document */
+    isExternalDocument: boolean;
+}
+
 export interface FeatureOptions {
     /** Whether to enable diagnostic messages (default: true) */
     diagnosticsEnabled?: boolean;
@@ -223,6 +237,13 @@ export interface LanguageServerOptions extends FeatureOptions {
     codeActionsConfig?: CodeActionsConfig;
     /** Callback triggered when a go-to-definition action is performed */
     onGoToDefinition?: (result: DefinitionResult) => void;
+    /**
+     * Callback triggered when the user activates a diagnostic's related-
+     * information entry that points to another document. Same-document entries
+     * are handled internally (selection + scroll); this is only invoked for
+     * external locations the host must open itself.
+     */
+    onShowLocation?: (result: ShowLocationResult) => void;
 
     /**
      * Configuration for the completion feature.
@@ -497,6 +518,16 @@ export class LanguageServerClient {
                 rename: {
                     dynamicRegistration: true,
                     prepareSupport: true,
+                },
+                publishDiagnostics: {
+                    relatedInformation: true,
+                    // DiagnosticTag.Unnecessary (1) and .Deprecated (2)
+                    tagSupport: { valueSet: [1, 2] },
+                    versionSupport: true,
+                    codeDescriptionSupport: true,
+                    // Preserve the `data` field between publishDiagnostics and
+                    // codeAction so servers can round-trip fix context
+                    dataSupport: true,
                 },
             },
             workspace: {
