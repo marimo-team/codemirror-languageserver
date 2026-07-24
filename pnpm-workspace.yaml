@@ -4,6 +4,8 @@ minimumReleaseAge: 20160
 verifyDepsBeforeRun: install
 minimumReleaseAgeExclude:
   - "@marimo-team/*"
+  # Renovate security update: vite@6.4.3
+  - vite@6.4.3
 blockExoticSubdeps: true
 trustPolicy: no-downgrade
 onlyBuiltDependencies: []
