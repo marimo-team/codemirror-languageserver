@@ -1,100 +1,253 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>CodeMirror LSP Demo</title>
         <style>
+            :root {
+                --page-bg: #ffffff;
+                --page-fg: #1f2328;
+                --muted-fg: #57606a;
+                --faint-fg: #8c959f;
+                --border: #d0d7de;
+                --surface: #f6f8fa;
+                --surface-hover: #eaeef2;
+                --accent: #0969da;
+                --accent-fg: #ffffff;
+                --code-bg: #eff1f3;
+                --shadow: 0 1px 3px rgba(31, 35, 40, 0.08),
+                    0 8px 24px rgba(31, 35, 40, 0.06);
+            }
+            html[data-theme="dark"] {
+                --page-bg: #0d1117;
+                --page-fg: #e6edf3;
+                --muted-fg: #9198a1;
+                --faint-fg: #6e7681;
+                --border: #30363d;
+                --surface: #161b22;
+                --surface-hover: #21262d;
+                --accent: #58a6ff;
+                --accent-fg: #0d1117;
+                --code-bg: #1f2733;
+                --shadow: 0 1px 3px rgba(1, 4, 9, 0.5),
+                    0 8px 24px rgba(1, 4, 9, 0.4);
+            }
+            * {
+                box-sizing: border-box;
+            }
             body {
                 margin: 0;
-                padding: 20px;
-                font-family: system-ui, -apple-system, sans-serif;
-                max-width: 900px;
+                padding: 40px 24px 64px;
+                font-family:
+                    system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+                background: var(--page-bg);
+                color: var(--page-fg);
+                transition:
+                    background-color 0.2s ease,
+                    color 0.2s ease;
             }
+            .wrap {
+                max-width: 920px;
+                margin: 0 auto;
+            }
+            header {
+                display: flex;
+                align-items: flex-start;
+                justify-content: space-between;
+                gap: 16px;
+                margin-bottom: 8px;
+            }
+            h1 {
+                font-size: 24px;
+                font-weight: 700;
+                margin: 0;
+                letter-spacing: -0.02em;
+            }
+            .lede {
+                color: var(--muted-fg);
+                font-size: 14px;
+                line-height: 1.6;
+                margin: 8px 0 24px;
+                max-width: 68ch;
+            }
+            /* Theme toggle */
+            .theme-toggle {
+                flex-shrink: 0;
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                padding: 7px 12px;
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                background: var(--surface);
+                color: var(--page-fg);
+                font-size: 13px;
+                font-weight: 500;
+                cursor: pointer;
+                transition:
+                    background-color 0.15s ease,
+                    border-color 0.15s ease;
+            }
+            .theme-toggle:hover {
+                background: var(--surface-hover);
+            }
+            .theme-toggle svg {
+                width: 16px;
+                height: 16px;
+            }
+            /* Tabs */
             #tabs {
                 display: flex;
                 gap: 4px;
                 margin-bottom: 16px;
-                border-bottom: 1px solid #ddd;
+                border-bottom: 1px solid var(--border);
             }
             .tab {
-                padding: 8px 16px;
+                padding: 9px 16px;
                 border: none;
                 border-bottom: 2px solid transparent;
                 background: transparent;
-                color: #444;
+                color: var(--muted-fg);
                 cursor: pointer;
                 font-size: 14px;
+                font-family: inherit;
+                margin-bottom: -1px;
+                transition:
+                    color 0.15s ease,
+                    background-color 0.15s ease;
+                border-radius: 6px 6px 0 0;
             }
             .tab:hover {
-                background: #f5f5f5;
+                background: var(--surface);
+                color: var(--page-fg);
             }
             .tab.active {
-                color: #4a90e2;
-                border-bottom-color: #4a90e2;
+                color: var(--accent);
+                border-bottom-color: var(--accent);
                 font-weight: 600;
             }
+            /* Editor frame */
             .cm-editor {
-                height: 420px;
-                border: 1px solid #ddd;
-                border-radius: 4px;
+                height: 440px;
+                border: 1px solid var(--border);
+                border-radius: 10px;
+                box-shadow: var(--shadow);
             }
+            .cm-editor.cm-focused {
+                border-color: var(--accent);
+            }
+            /* Round the inner scroller to match the frame. Note: we can't clip
+               the editor with `overflow: hidden` because absolutely-positioned
+               tooltips (hover, completion) render inside it and would be cut
+               off at the edges. */
+            .cm-editor .cm-scroller {
+                border-radius: 10px;
+            }
+            /* Demo hint / controls */
             .demo-hint {
-                margin: 0 0 12px;
-                color: #555;
+                margin: 0 0 14px;
+                color: var(--muted-fg);
                 font-size: 13px;
-                line-height: 1.5;
+                line-height: 1.6;
             }
             .demo-hint code {
-                background: #f0f0f0;
-                padding: 1px 4px;
-                border-radius: 3px;
-            }
-            .cm-rename-popup {
-                background: white;
+                background: var(--code-bg);
+                padding: 1px 5px;
                 border-radius: 4px;
-                box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
-            }
-            .cm-rename-popup input {
-                font-size: 14px;
-                font-family: inherit;
-            }
-            .cm-error-message {
-                font-family: inherit;
+                font-size: 12px;
             }
             .demo-controls {
                 margin-bottom: 16px;
+                display: flex;
+                gap: 8px;
+                flex-wrap: wrap;
             }
             .demo-controls button {
-                margin-right: 8px;
-                padding: 8px 16px;
-                border: none;
-                border-radius: 4px;
-                background: #4a90e2;
-                color: white;
+                padding: 7px 14px;
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                background: var(--surface);
+                color: var(--page-fg);
+                font-size: 13px;
+                font-family: inherit;
                 cursor: pointer;
+                transition:
+                    background-color 0.15s ease,
+                    border-color 0.15s ease;
             }
             .demo-controls button:hover {
-                background: #357abd;
+                background: var(--surface-hover);
+                border-color: var(--accent);
+            }
+            /* Shortcuts */
+            .shortcuts {
+                margin-top: 32px;
+                padding: 16px 20px;
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: 10px;
+            }
+            .shortcuts h3 {
+                margin: 0 0 10px;
+                font-size: 13px;
+                text-transform: uppercase;
+                letter-spacing: 0.06em;
+                color: var(--muted-fg);
+            }
+            .shortcuts ul {
+                margin: 0;
+                padding: 0;
+                list-style: none;
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+                gap: 8px;
+                font-size: 13px;
+            }
+            .shortcuts kbd {
+                display: inline-block;
+                min-width: 18px;
+                text-align: center;
+                padding: 2px 6px;
+                margin-right: 6px;
+                font-family:
+                    ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+                font-size: 11px;
+                background: var(--code-bg);
+                border: 1px solid var(--border);
+                border-radius: 5px;
             }
         </style>
     </head>
     <body>
-        <h1>CodeMirror LSP Demo</h1>
-        <p>
-            Three language servers, all running in the browser. Switch tabs to
-            try diagnostics, completion, hover, go-to-definition, signature
-            help, rename, and code actions.
-        </p>
-        <div id="tabs"></div>
-        <div id="demo-root"></div>
-        <div>
-            <h3>Keyboard Shortcuts:</h3>
-            <ul>
-                <li><strong>F2</strong>: Rename symbol</li>
-                <li><strong>Ctrl/Cmd + Click</strong>: Go to definition</li>
-                <li><strong>Ctrl/Cmd + Space</strong>: Trigger completion</li>
-            </ul>
+        <div class="wrap">
+            <header>
+                <div>
+                    <h1>CodeMirror LSP Demo</h1>
+                </div>
+                <button
+                    id="theme-toggle"
+                    class="theme-toggle"
+                    type="button"
+                    aria-label="Toggle color theme"
+                ></button>
+            </header>
+            <p class="lede">
+                Three language servers, all running in the browser. Switch tabs
+                to try diagnostics, completion, hover, go-to-definition,
+                signature help, rename, and code actions.
+            </p>
+            <div id="tabs"></div>
+            <div id="demo-root"></div>
+            <div class="shortcuts">
+                <h3>Keyboard Shortcuts</h3>
+                <ul>
+                    <li><kbd>F2</kbd> Rename symbol</li>
+                    <li><kbd>⌘/Ctrl</kbd> + Click — Go to definition</li>
+                    <li><kbd>⌘/Ctrl</kbd> + <kbd>Space</kbd> — Completion</li>
+                    <li><kbd>⌘/Ctrl</kbd> + <kbd>.</kbd> — Code actions</li>
+                </ul>
+            </div>
         </div>
         <script type="module" src="./main.ts"></script>
     </body>

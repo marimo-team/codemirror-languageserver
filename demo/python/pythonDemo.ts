@@ -4,6 +4,7 @@ import { EditorState } from "@codemirror/state";
 import { EditorView, tooltips } from "@codemirror/view";
 import { basicSetup } from "codemirror";
 import { languageServerWithClient } from "../../src";
+import { registerEditor, themeExtension } from "../shared/theme";
 import { createWorkerClient } from "../shared/workerTransport";
 
 const DOCUMENT_URI = "file:///main.py";
@@ -52,6 +53,7 @@ export function mountPythonDemo(container: HTMLElement): () => void {
             extensions: [
                 basicSetup,
                 python(),
+                themeExtension(),
                 tooltips({ position: "absolute" }),
                 lintGutter(),
                 languageServerWithClient({
@@ -66,7 +68,10 @@ export function mountPythonDemo(container: HTMLElement): () => void {
         parent: container,
     });
 
+    const unregister = registerEditor(view);
+
     return () => {
+        unregister();
         view.destroy();
         client.close();
     };

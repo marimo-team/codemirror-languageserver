@@ -4,6 +4,7 @@ import { EditorState } from "@codemirror/state";
 import { EditorView, tooltips } from "@codemirror/view";
 import { basicSetup } from "codemirror";
 import { languageServerWithClient } from "../../src";
+import { registerEditor, themeExtension } from "../shared/theme";
 import { createWorkerClient } from "../shared/workerTransport";
 
 const DOCUMENT_URI = "file:///index.ts";
@@ -61,6 +62,7 @@ export function mountTypeScriptDemo(container: HTMLElement): () => void {
             extensions: [
                 basicSetup,
                 javascript({ typescript: true }),
+                themeExtension(),
                 tooltips({ position: "absolute" }),
                 lintGutter(),
                 languageServerWithClient({
@@ -78,7 +80,10 @@ export function mountTypeScriptDemo(container: HTMLElement): () => void {
         parent: container,
     });
 
+    const unregister = registerEditor(view);
+
     return () => {
+        unregister();
         view.destroy();
         client.close();
     };
