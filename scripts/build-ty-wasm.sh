@@ -36,6 +36,13 @@ else
     git -C "$RUFF_DIR" checkout --quiet --force --detach FETCH_HEAD
 fi
 
+# wasm-pack honors ruff's pinned rust-toolchain.toml, so the wasm target must be
+# installed for that toolchain, not just `stable`. Running rustup in the crate
+# dir picks up the pin (and installs the toolchain if absent).
+if command -v rustup >/dev/null 2>&1; then
+    (cd "$RUFF_DIR/crates/ty_wasm" && rustup target add wasm32-unknown-unknown)
+fi
+
 echo "Building ty_wasm (this compiles a large Rust project; it can take a while)..."
 wasm-pack build "$RUFF_DIR/crates/ty_wasm" --target web --out-dir "$OUT_DIR"
 

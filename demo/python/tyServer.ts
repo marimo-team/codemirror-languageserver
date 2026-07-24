@@ -30,6 +30,22 @@ interface TyDiagnostic {
 interface TyFileHandle {
     path(): string;
 }
+interface TyHover {
+    markdown: string;
+    range: TyRange;
+}
+interface TyCompletion {
+    name: string;
+    kind?: number;
+    detail?: string;
+    documentation?: string;
+    insert_text?: string;
+    additional_text_edits?: TyTextEdit[];
+}
+// ty positions are 1-indexed {line, column}; LSP positions are 0-indexed.
+interface TyPositionCtor {
+    new (line: number, column: number): TyPosition;
+}
 export interface TyWorkspace {
     openFile(path: string, contents: string): TyFileHandle;
     updateFile(handle: TyFileHandle, contents: string): void;
@@ -40,6 +56,8 @@ export interface TyWorkspace {
         handle: TyFileHandle,
         diagnostic: TyDiagnostic,
     ): TyCodeAction[] | undefined;
+    hover(handle: TyFileHandle, position: TyPosition): TyHover | undefined;
+    completions(handle: TyFileHandle, position: TyPosition): TyCompletion[];
 }
 
 enum TySeverity {
@@ -55,11 +73,54 @@ const FILE_PATH = "main.py";
 export class TyServer {
     private handles = new Map<string, TyFileHandle>();
 
-    constructor(private workspace: TyWorkspace) {}
+    constructor(
+        private workspace: TyWorkspace,
+        private Position: TyPositionCtor,
+    ) {}
 
     setDocument(uri: string, text: string): LSP.Diagnostic[] {
         const handle = this.handle(uri, text);
         return this.diagnostics(handle);
+    }
+
+    hover(params: LSP.HoverParams): LSP.Hover | null {
+        const handle = this.handles.get(params.textDocument.uri);
+        if (!handle) {
+            return null;
+        }
+        const hover = this.workspace.hover(
+            handle,
+            toTyPosition(this.Position, params.position),
+        );
+        if (!hover) {
+            return null;
+        }
+        return {
+            contents: { kind: "markdown", value: hover.markdown },
+            range: toRange(hover.range),
+        };
+    }
+
+    completion(params: LSP.CompletionParams): LSP.CompletionItem[] {
+        const handle = this.handles.get(params.textDocument.uri);
+        if (!handle) {
+            return [];
+        }
+        const position = toTyPosition(this.Position, params.position);
+        return this.workspace.completions(handle, position).map((item) => ({
+            label: item.name,
+            // ty's CompletionKind is LSP's CompletionItemKind minus 1.
+            kind: item.kind != null ? item.kind + 1 : undefined,
+            detail: item.detail,
+            documentation: item.documentation
+                ? { kind: "markdown", value: item.documentation }
+                : undefined,
+            insertText: item.insert_text,
+            additionalTextEdits: item.additional_text_edits?.map((edit) => ({
+                range: toRange(edit.range),
+                newText: edit.new_text,
+            })),
+        }));
     }
 
     codeAction(params: LSP.CodeActionParams): LSP.CodeAction[] {
@@ -135,6 +196,13 @@ function toRange(range: TyRange): LSP.Range {
 
 function toPosition(position: TyPosition): LSP.Position {
     return { line: position.line - 1, character: position.column - 1 };
+}
+
+function toTyPosition(
+    Position: TyPositionCtor,
+    position: LSP.Position,
+): TyPosition {
+    return new Position(position.line + 1, position.character + 1);
 }
 
 function toSeverity(severity: number): LSP.DiagnosticSeverity {
