@@ -1,2 +1,6 @@
 [files]
 extend-exclude = ["**/*.test.ts"]
+
+[default.extend-identifiers]
+# Intentional typo in the Python demo used to show Ruff's F821 diagnostic.
+mesage = "mesage"

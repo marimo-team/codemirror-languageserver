@@ -53,6 +53,7 @@ import {
 } from "./lsp.js";
 import { WebSocketTransport } from "./transport.js";
 import {
+    diagnosticMessageToString,
     eventsFromChangeSet,
     isCompletionList,
     isEmptyDocumentation,
@@ -1009,7 +1010,7 @@ export class LanguageServerPlugin implements PluginValue {
                     from,
                     to,
                     severity: severityMap[severity ?? DiagnosticSeverity.Error],
-                    message: message,
+                    message: diagnosticMessageToString(message),
                     renderMessage: (view) =>
                         this.renderDiagnosticMessage(
                             view,
@@ -1104,10 +1105,11 @@ export class LanguageServerPlugin implements PluginValue {
         dom.classList.add("cm-lsp-diagnostic-message");
 
         const body = document.createElement("div");
+        const messageText = diagnosticMessageToString(message);
         if (this.allowHTMLContent) {
-            body.innerHTML = this.markdownRenderer(message);
+            body.innerHTML = this.markdownRenderer(messageText);
         } else {
-            body.textContent = message;
+            body.textContent = messageText;
         }
         dom.appendChild(body);
 
@@ -2161,7 +2163,16 @@ export class LanguageServerPlugin implements PluginValue {
             for (const docChange of documentChanges) {
                 if ("textDocument" in docChange) {
                     if (docChange.textDocument.uri === this.documentUri) {
-                        edits.push(...docChange.edits);
+                        // Snippet edits (LSP 3.18) carry a `snippet` instead
+                        // of `newText`; we can't apply them, so skip them and
+                        // keep the plain/annotated text edits.
+                        for (const docEdit of docChange.edits) {
+                            if ("newText" in docEdit) {
+                                edits.push(docEdit);
+                            } else {
+                                skipped = "Snippet edits not supported yet";
+                            }
+                        }
                     } else {
                         skipped = "Multi-file edits not supported yet";
                     }
