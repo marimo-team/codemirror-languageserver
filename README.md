@@ -132,11 +132,17 @@ actions directly through the plugin:
 import { getLanguageServerPlugin } from '@marimo-team/codemirror-languageserver';
 
 const plugin = getLanguageServerPlugin(view);
-const actions = await plugin?.requestCodeActions(view, range, [
-  'source.organizeImports',
-]);
-if (actions?.[0]) {
-  await plugin.applyCodeAction(actions[0]);
+if (plugin) {
+  const wholeDocument = {
+    start: { line: 0, character: 0 },
+    end: { line: view.state.doc.lines - 1, character: 0 },
+  };
+  const actions = await plugin.requestCodeActions(view, wholeDocument, [
+    'source.organizeImports',
+  ]);
+  if (actions?.[0]) {
+    await plugin.applyCodeAction(actions[0]);
+  }
 }
 ```
 

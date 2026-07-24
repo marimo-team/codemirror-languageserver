@@ -86,9 +86,20 @@ function comparePosition(a: LSP.Position, b: LSP.Position): number {
 }
 
 function rangesOverlap(a: LSP.Range, b: LSP.Range): boolean {
+    // LSP ranges are end-exclusive, so adjacent ranges do not overlap. Empty
+    // ranges are treated as touching points so a zero-length diagnostic still
+    // matches actions at its position.
+    const aEmpty = comparePosition(a.start, a.end) === 0;
+    const bEmpty = comparePosition(b.start, b.end) === 0;
+    if (aEmpty || bEmpty) {
+        return (
+            comparePosition(a.start, b.end) <= 0 &&
+            comparePosition(b.start, a.end) <= 0
+        );
+    }
     return (
-        comparePosition(a.start, b.end) <= 0 &&
-        comparePosition(b.start, a.end) <= 0
+        comparePosition(a.start, b.end) < 0 &&
+        comparePosition(b.start, a.end) < 0
     );
 }
 
@@ -253,6 +264,8 @@ export class LanguageServerPlugin implements PluginValue {
     private disposeListener?: () => void;
     private destroyed = false;
     private documentOpened = false;
+    /** Dismisses the currently open code action menu, if any. */
+    private closeCodeActionMenu?: () => void;
 
     constructor(opts: {
         client: LanguageServerClient;
@@ -342,6 +355,7 @@ export class LanguageServerPlugin implements PluginValue {
         this.destroyed = true;
         this.disposeListener?.();
         this.disposeListener = undefined;
+        this.closeCodeActionMenu?.();
         unregisterPlugin(this.view, this);
         this.closeDocument();
     }
@@ -1093,8 +1107,7 @@ export class LanguageServerPlugin implements PluginValue {
         if (action.edit || action.command) {
             return action;
         }
-        const provider = this.client.capabilities?.codeActionProvider;
-        if (!(typeof provider === "object" && provider.resolveProvider)) {
+        if (!this.serverSupportsCodeActionResolve()) {
             return action;
         }
         try {
@@ -1106,14 +1119,45 @@ export class LanguageServerPlugin implements PluginValue {
     }
 
     /**
+     * Whether the server can answer `codeAction/resolve`, announced either
+     * statically or via a dynamic codeAction registration.
+     */
+    private serverSupportsCodeActionResolve(): boolean {
+        const provider = this.client.capabilities?.codeActionProvider;
+        if (typeof provider === "object" && provider.resolveProvider) {
+            return true;
+        }
+        for (const registration of this.client.dynamicCapabilities.values()) {
+            if (registration.method === "textDocument/codeAction") {
+                const options = registration.registerOptions as
+                    | LSP.CodeActionRegistrationOptions
+                    | undefined;
+                if (options?.resolveProvider) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
      * Requests code actions for the current selection and presents them via
      * the host's `codeActionsConfig.renderMenu` or the built-in popup. Bound
      * to the `codeActions` keyboard shortcut.
      * @returns True when at least one action was shown
      */
     public async showCodeActionsMenu(view: EditorView): Promise<boolean> {
+        const requestState = view.state;
         const actions = await this.requestCodeActionsAtSelection(view);
         if (this.destroyed) {
+            return false;
+        }
+        // The document or selection may have moved while the request was in
+        // flight; actions for the old context must not be shown
+        if (
+            view.state.doc !== requestState.doc ||
+            !view.state.selection.main.eq(requestState.selection.main)
+        ) {
             return false;
         }
         if (!actions || actions.length === 0) {
@@ -1140,6 +1184,9 @@ export class LanguageServerPlugin implements PluginValue {
         actions: (LSP.Command | LSP.CodeAction)[],
         apply: (action: LSP.Command | LSP.CodeAction) => Promise<void>,
     ): void {
+        // Only one menu at a time
+        this.closeCodeActionMenu?.();
+
         const menu = document.createElement("div");
         menu.className = "cm-code-action-menu";
         menu.setAttribute("role", "listbox");
@@ -1152,10 +1199,13 @@ export class LanguageServerPlugin implements PluginValue {
             }
         };
         const dismiss = () => {
+            if (this.closeCodeActionMenu === dismiss) {
+                this.closeCodeActionMenu = undefined;
+            }
             menu.remove();
             document.removeEventListener("mousedown", handleOutsideMousedown);
-            view.focus();
         };
+        this.closeCodeActionMenu = dismiss;
 
         const buttons = actions.map((action) => {
             const item = document.createElement("button");
@@ -1182,6 +1232,7 @@ export class LanguageServerPlugin implements PluginValue {
             }
             item.addEventListener("click", () => {
                 dismiss();
+                view.focus();
                 void apply(action);
             });
             menu.appendChild(item);
@@ -1211,6 +1262,7 @@ export class LanguageServerPlugin implements PluginValue {
         menu.addEventListener("keydown", (event) => {
             if (event.key === "Escape") {
                 dismiss();
+                view.focus();
             } else if (event.key === "ArrowDown") {
                 move(1);
             } else if (event.key === "ArrowUp") {
@@ -1231,8 +1283,10 @@ export class LanguageServerPlugin implements PluginValue {
         // menu, just unpositioned
         const coords = view.coordsAtPos(view.state.selection.main.from);
         if (coords) {
-            menu.style.left = `${coords.left}px`;
-            menu.style.top = `${coords.bottom + 5}px`;
+            // coordsAtPos returns viewport coordinates; the menu is
+            // absolutely positioned in the page
+            menu.style.left = `${coords.left + window.scrollX}px`;
+            menu.style.top = `${coords.bottom + window.scrollY + 5}px`;
         }
 
         document.addEventListener("mousedown", handleOutsideMousedown);
@@ -1784,30 +1838,31 @@ export class LanguageServerPlugin implements PluginValue {
 
         // Handle documentChanges (preferred) if available
         if (documentChanges.length > 0) {
+            // Collect every edit for this document so multi-entry edits apply
+            // in one transaction; unsupported entries are skipped with a
+            // message instead of dropping the whole edit
+            const edits: LSP.TextEdit[] = [];
+            let skipped: string | null = null;
             for (const docChange of documentChanges) {
                 if ("textDocument" in docChange) {
-                    // This is a TextDocumentEdit
-                    const uri = docChange.textDocument.uri;
-
-                    if (uri !== this.documentUri) {
-                        showErrorMessage(
-                            view,
-                            "Multi-file edits not supported yet",
-                        );
-                        continue;
+                    if (docChange.textDocument.uri === this.documentUri) {
+                        edits.push(...docChange.edits);
+                    } else {
+                        skipped = "Multi-file edits not supported yet";
                     }
-
-                    return this.applyEdits(view, docChange.edits);
+                } else {
+                    // CreateFile, RenameFile, or DeleteFile operation
+                    skipped =
+                        "File creation, deletion, or renaming operations not supported yet";
                 }
-
-                // This is a CreateFile, RenameFile, or DeleteFile operation
-                showErrorMessage(
-                    view,
-                    "File creation, deletion, or renaming operations not supported yet",
-                );
+            }
+            if (skipped) {
+                showErrorMessage(view, skipped);
+            }
+            if (edits.length === 0) {
                 return false;
             }
-            return false;
+            return this.applyEdits(view, edits);
         }
 
         // Fall back to changes if documentChanges is not available

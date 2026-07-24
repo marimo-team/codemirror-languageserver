@@ -197,6 +197,54 @@ describe("applyCodeAction / codeAction/resolve", () => {
 
         expect(view.state.doc.toString()).toBe("hello there");
     });
+
+    it("applies all documentChanges entries for this document in one transaction", async () => {
+        const client = createFakeClient();
+        const view = createView("hello world");
+        const plugin = createPlugin(view, client);
+
+        await plugin.applyCodeAction({
+            title: "Fix it",
+            edit: {
+                documentChanges: [
+                    {
+                        textDocument: { uri: DOCUMENT_URI, version: 1 },
+                        edits: [{ range: range(0, 0, 0, 5), newText: "howdy" }],
+                    },
+                    {
+                        textDocument: { uri: DOCUMENT_URI, version: 1 },
+                        edits: [
+                            { range: range(0, 6, 0, 11), newText: "there" },
+                        ],
+                    },
+                ],
+            },
+        });
+
+        expect(view.state.doc.toString()).toBe("howdy there");
+    });
+
+    it("resolves via a dynamically registered codeAction provider", async () => {
+        const client = createFakeClient({
+            capabilities: { codeActionProvider: true },
+        });
+        client.dynamicCapabilities.set("reg-1", {
+            id: "reg-1",
+            method: "textDocument/codeAction",
+            registerOptions: { resolveProvider: true },
+        });
+        client.codeActionResolve = vi.fn().mockResolvedValue({
+            title: "Fix it",
+            edit: editReplacing(range(0, 0, 0, 5), "fixed"),
+        });
+        const view = createView("hello world");
+        const plugin = createPlugin(view, client);
+
+        await plugin.applyCodeAction({ title: "Fix it" });
+
+        expect(client.codeActionResolve).toHaveBeenCalled();
+        expect(view.state.doc.toString()).toBe("fixed world");
+    });
 });
 
 describe("requestCodeActionsAtSelection", () => {
@@ -308,8 +356,9 @@ describe("batched diagnostics code actions", () => {
             range: range(0, 0, 0, 5),
             message: "first",
         };
+        // Adjacent to first (ranges are end-exclusive): must not overlap
         const second: LSP.Diagnostic = {
-            range: range(0, 6, 0, 11),
+            range: range(0, 5, 0, 11),
             message: "second",
         };
         const client = createFakeClient({
