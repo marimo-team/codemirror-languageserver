@@ -69,29 +69,47 @@ class MockTransport implements Transport {
             }
         };
 
-        switch (message.method) {
-            case "initialize":
-                return reply(server.initialize());
-            case "textDocument/didOpen":
-                return void server.didOpenTextDocument(params);
-            case "textDocument/didChange":
-                return void server.didChangeTextDocument(params);
-            case "textDocument/completion":
-                return reply(await server.completion(params));
-            case "completionItem/resolve":
-                return reply(await server.completionResolve(params));
-            case "textDocument/hover":
-                return reply(await server.hover(params));
-            case "textDocument/definition":
-                return reply(await server.definition(params));
-            case "textDocument/prepareRename":
-                return reply(await server.prepareRename(params));
-            case "textDocument/rename":
-                return reply(await server.rename(params));
-            case "textDocument/codeAction":
-                return reply(await server.codeAction(params));
-            case "textDocument/signatureHelp":
-                return reply(await server.signatureHelp(params));
+        try {
+            switch (message.method) {
+                case "initialize":
+                    return reply(server.initialize());
+                case "textDocument/didOpen":
+                    return void server.didOpenTextDocument(params);
+                case "textDocument/didChange":
+                    return void server.didChangeTextDocument(params);
+                case "textDocument/completion":
+                    return reply(await server.completion(params));
+                case "completionItem/resolve":
+                    return reply(await server.completionResolve(params));
+                case "textDocument/hover":
+                    return reply(await server.hover(params));
+                case "textDocument/definition":
+                    return reply(await server.definition(params));
+                case "textDocument/prepareRename":
+                    return reply(await server.prepareRename(params));
+                case "textDocument/rename":
+                    return reply(await server.rename(params));
+                case "textDocument/codeAction":
+                    return reply(await server.codeAction(params));
+                case "textDocument/signatureHelp":
+                    return reply(await server.signatureHelp(params));
+            }
+        } catch (error) {
+            // Settle failed requests with a JSON-RPC error instead of letting
+            // them hang until the client's timeout.
+            if (id !== undefined) {
+                this.emit({
+                    jsonrpc: "2.0",
+                    id,
+                    error: {
+                        code: -32603,
+                        message:
+                            error instanceof Error
+                                ? error.message
+                                : String(error),
+                    },
+                });
+            }
         }
     }
 }

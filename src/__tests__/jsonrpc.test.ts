@@ -11,6 +11,7 @@ import {
 class ControlledTransport implements Transport {
     readonly sent: JSONRPCMessage[] = [];
     closed = false;
+    throwOnSend = false;
     private handler?: (message: JSONRPCMessage) => void;
     private resolveConnect!: () => void;
     private rejectConnect!: (reason: unknown) => void;
@@ -29,6 +30,9 @@ class ControlledTransport implements Transport {
     }
 
     send(message: JSONRPCMessage): void {
+        if (this.throwOnSend) {
+            throw new Error("send failed");
+        }
         this.sent.push(message);
     }
 
@@ -164,6 +168,28 @@ describe("request", () => {
         await expect(pending).rejects.toThrow("no route");
         expect(transport.sent).toEqual([]);
     });
+
+    it("settles immediately when the transport send throws", async () => {
+        const transport = new ControlledTransport();
+        transport.throwOnSend = true;
+        const client = new JSONRPCClient(transport);
+
+        await expect(client.request("m", {}, 1000)).rejects.toThrow(
+            "send failed",
+        );
+    });
+
+    it("rejects requests started after close without waiting for a timeout", async () => {
+        const transport = new ControlledTransport();
+        const client = new JSONRPCClient(transport);
+        client.close();
+
+        await expect(client.request("m", {}, 1000)).rejects.toMatchObject({
+            name: "RPCError",
+            message: "Client closed",
+        });
+        expect(transport.sent).toEqual([]);
+    });
 });
 
 describe("notify and respond", () => {
@@ -191,6 +217,18 @@ describe("notify and respond", () => {
         expect(transport.sent).toEqual([
             { jsonrpc: "2.0", id: 5, result: null },
         ]);
+    });
+
+    it("drops notifications and responses after close without rejecting", async () => {
+        const transport = new ControlledTransport();
+        const client = new JSONRPCClient(transport);
+        client.close();
+
+        await expect(client.notify("x", {})).resolves.toBeUndefined();
+        await expect(
+            client.respond({ jsonrpc: "2.0", id: 1, result: null }),
+        ).resolves.toBeUndefined();
+        expect(transport.sent).toEqual([]);
     });
 });
 

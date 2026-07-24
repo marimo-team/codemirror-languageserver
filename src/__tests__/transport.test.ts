@@ -52,6 +52,11 @@ class MockSocket {
         this.fire("error", {});
     }
 
+    emitClose(): void {
+        this.readyState = MockSocket.CLOSED;
+        this.fire("close", {});
+    }
+
     private fire(type: string, event: unknown = {}): void {
         for (const listener of this.listeners.get(type) ?? []) {
             listener(event);
@@ -95,6 +100,24 @@ describe("connect", () => {
         lastSocket().emitError();
 
         await expect(connected).rejects.toThrow("ws://host/lsp");
+    });
+
+    it("rejects when the socket closes before opening", async () => {
+        const transport = new WebSocketTransport("ws://host/lsp");
+        const connected = transport.connect();
+        connected.catch(() => {});
+        lastSocket().emitClose();
+
+        await expect(connected).rejects.toThrow("closed before opening");
+    });
+
+    it("rejects a pending connection when close() is called before open", async () => {
+        const transport = new WebSocketTransport("ws://host/lsp");
+        const connected = transport.connect();
+        connected.catch(() => {});
+        transport.close();
+
+        await expect(connected).rejects.toThrow("closed");
     });
 });
 
@@ -177,10 +200,12 @@ describe("onMessage", () => {
 });
 
 describe("close", () => {
-    it("closes the socket and clears handlers", () => {
+    it("closes the socket and clears handlers", async () => {
         const transport = new WebSocketTransport("ws://host");
-        transport.connect();
+        const connected = transport.connect();
         const socket = lastSocket();
+        socket.emitOpen(); // open first so close() has no pending connect
+        await connected;
         const handler = vi.fn();
         transport.onMessage(handler);
 

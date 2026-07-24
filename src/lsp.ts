@@ -611,7 +611,9 @@ export class LanguageServerClient {
         if (this.isClosed) {
             return;
         }
-        void this.client.respond(response);
+        // An async handler may finish after the transport closed; swallow the
+        // resulting send failure so teardown is not an unhandled rejection.
+        void this.client.respond(response).catch(() => {});
     }
 
     public textDocumentDidOpen(params: LSP.DidOpenTextDocumentParams) {

@@ -161,6 +161,11 @@ export class JSONRPCClient {
         params: unknown,
         timeout: number = DEFAULT_TIMEOUT,
     ): Promise<unknown> {
+        if (this.closed) {
+            return Promise.reject(
+                new RPCError(ErrorCodes.InternalError, "Client closed"),
+            );
+        }
         const id = this.nextId++;
         return new Promise<unknown>((resolve, reject) => {
             const timer = setTimeout(() => {
@@ -177,13 +182,18 @@ export class JSONRPCClient {
                 () => {
                     // The request may have timed out or been closed while
                     // connecting; only send if it is still pending.
-                    if (this.pending.has(id)) {
+                    if (!this.pending.has(id)) {
+                        return;
+                    }
+                    try {
                         this.transport.send({
                             jsonrpc: "2.0",
                             id,
                             method,
                             params,
                         });
+                    } catch (error) {
+                        this.settle(id, (p) => p.reject(toError(error)));
                     }
                 },
                 (error) => this.settle(id, (p) => p.reject(toError(error))),
@@ -218,8 +228,11 @@ export class JSONRPCClient {
         this.transport.close();
     }
 
-    /** Send once the transport is connected. */
+    /** Send once the transport is connected; a no-op once closed. */
     private dispatch(message: JSONRPCMessage): Promise<void> {
+        if (this.closed) {
+            return Promise.resolve();
+        }
         return this.connected.then(() => this.transport.send(message));
     }
 
