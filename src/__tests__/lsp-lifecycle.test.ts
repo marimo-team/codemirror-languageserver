@@ -182,18 +182,36 @@ describe("request gating", () => {
         expect(sentRequests(transport, "textDocument/hover")).toEqual([]);
     });
 
-    it("gates a request queued during initialization on the final capabilities", async () => {
-        // The request is issued before the handshake answers, so the decision
-        // can only be made once the server's capabilities are known.
+    it("gates a queued request whose feature cannot be registered dynamically", async () => {
+        // The request is issued before the handshake answers. Completion is
+        // advertised with dynamicRegistration: false, so the initialize
+        // response is the final word on whether it is supported.
         const transport = new FakeTransport({ capabilities: {} });
         const client = makeClient({ transport });
 
-        const hover = client.textDocumentHover(hoverParams);
-        hover.catch(() => {});
+        const completion = client.textDocumentCompletion({
+            textDocument: { uri: "file:///a.ts" },
+            position: { line: 0, character: 0 },
+        });
+        completion.catch(() => {});
         await flushTicks();
 
-        await expect(hover).rejects.toThrow(/does not support/i);
-        expect(sentRequests(transport, "textDocument/hover")).toEqual([]);
+        await expect(completion).rejects.toThrow(/does not support/i);
+        expect(sentRequests(transport, "textDocument/completion")).toEqual([]);
+    });
+
+    it("lets a queued request through when a dynamic registration may still arrive", async () => {
+        // Hover advertises dynamicRegistration, so a server that omits
+        // hoverProvider may still announce it with client/registerCapability
+        // after the handshake; gating on the initialize response alone would
+        // fail a request the server does support.
+        const transport = new FakeTransport({ capabilities: {} });
+        const client = makeClient({ transport });
+
+        void client.textDocumentHover(hoverParams).catch(() => {});
+        await flushTicks();
+
+        expect(sentRequests(transport, "textDocument/hover")).toHaveLength(1);
     });
 
     it("rejects feature requests after initialize failed", async () => {

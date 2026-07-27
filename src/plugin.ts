@@ -365,6 +365,10 @@ export class LanguageServerPlugin implements PluginValue {
     // Set the moment `didOpen` snapshots the document text. Changes made
     // before that point are already carried by the snapshot.
     private documentTextSnapshotted = false;
+    // Whether this plugin's `didOpen` is what put the text on the server. It
+    // is not when another view already holds the document open, in which case
+    // nothing carries this plugin's text and no change may be dropped.
+    private documentOpenCarriedText = true;
     private documentReady: Promise<void>;
     private signatureHelpRequestId = 0;
     /** Dismisses the currently open code action menu, if any. */
@@ -509,7 +513,7 @@ export class LanguageServerPlugin implements PluginValue {
         // server was still initializing are not lost
         const text = documentText ?? this.view.state.doc.toString();
         this.documentTextSnapshotted = true;
-        await this.client.textDocumentDidOpen({
+        const sentDidOpen = await this.client.textDocumentDidOpen({
             textDocument: {
                 uri: this.documentUri,
                 languageId: this.languageId,
@@ -517,6 +521,9 @@ export class LanguageServerPlugin implements PluginValue {
                 version: this.documentVersion,
             },
         });
+        // A client that predates this signature reports `undefined`; treat
+        // anything but an explicit `false` as "the text was sent".
+        this.documentOpenCarriedText = sentDidOpen !== false;
         this.documentOpened = true;
         // If the view was torn down while didOpen was in flight, destroy() saw
         // documentOpened === false and could not close. Balance the open here
@@ -555,7 +562,7 @@ export class LanguageServerPlugin implements PluginValue {
         const changedAfterSnapshot = this.documentTextSnapshotted;
         if (!this.documentOpened) {
             await this.documentReady;
-            if (!changedAfterSnapshot) {
+            if (!changedAfterSnapshot && this.documentOpenCarriedText) {
                 // `didOpen` sent the document text as of a later moment, so
                 // resending this change would apply it to the server twice.
                 return;

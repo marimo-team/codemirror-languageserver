@@ -299,6 +299,8 @@ export interface LanguageServerWebsocketOptions
 export class LanguageServerClient {
     public ready: boolean;
     public capabilities: LSP.ServerCapabilities | null;
+    /** The client capabilities sent with `initialize`. */
+    private advertisedCapabilities?: LSP.ClientCapabilities;
 
     public initializePromise: Promise<void>;
     private rootUri: string;
@@ -586,9 +588,13 @@ export class LanguageServerClient {
     }
 
     public async initialize() {
+        const options = this.getInitializationOptions();
+        this.advertisedCapabilities = (
+            options as { capabilities?: LSP.ClientCapabilities } | undefined
+        )?.capabilities;
         const result = await this.request(
             "initialize",
-            this.getInitializationOptions(),
+            options,
             this.timeout * 3,
         );
         if (
@@ -662,6 +668,24 @@ export class LanguageServerClient {
     }
 
     /**
+     * Whether the server is still free to announce this method through
+     * `client/registerCapability`, which arrives after the initialize
+     * response. Only true for features this client advertised
+     * `dynamicRegistration` for; for anything else the initialize response is
+     * the final word.
+     */
+    private mayRegisterDynamically(method: string): boolean {
+        const [scope, feature] = method.split("/");
+        if (scope !== "textDocument" || !feature) {
+            return false;
+        }
+        const textDocument = this.advertisedCapabilities?.textDocument as
+            | Record<string, { dynamicRegistration?: boolean } | undefined>
+            | undefined;
+        return textDocument?.[feature]?.dynamicRegistration === true;
+    }
+
+    /**
      * Whether the server supports the given client->server method, counting
      * both statically announced capabilities and capabilities the server
      * registered dynamically via `client/registerCapability`.
@@ -729,16 +753,23 @@ export class LanguageServerClient {
         void this.client.respond(response).catch(() => {});
     }
 
-    public textDocumentDidOpen(params: LSP.DidOpenTextDocumentParams) {
+    /**
+     * @returns Whether this call sent `didOpen`. Additional views onto an
+     * already-open document share the server's single open and resolve
+     * `false`, meaning the server never saw *this* caller's text.
+     */
+    public textDocumentDidOpen(
+        params: LSP.DidOpenTextDocumentParams,
+    ): Promise<boolean> {
         const uri = params.textDocument.uri;
         const previous = this.documentOpenCounts.get(uri) ?? 0;
         this.documentOpenCounts.set(uri, previous + 1);
         // Additional views onto an already-open document share the server's
         // single open; only the first view sends didOpen.
         if (previous > 0) {
-            return Promise.resolve(undefined);
+            return Promise.resolve(false);
         }
-        return this.notify("textDocument/didOpen", params);
+        return this.notify("textDocument/didOpen", params).then(() => true);
     }
 
     public textDocumentDidChange(params: LSP.DidChangeTextDocumentParams) {
@@ -852,12 +883,19 @@ export class LanguageServerClient {
         // A capability the server has since dropped still counts, so a request
         // issued while it was advertised is not failed by a later change.
         const capabilityWasAvailable = this.hasCapability(method);
+        // A request made before the handshake answered cannot be judged by the
+        // initialize response alone when a dynamic registration for it may
+        // still be on its way.
+        const registrationMayBePending =
+            !(this.ready || this.capabilities) &&
+            this.mayRegisterDynamically(method);
         return this.initializePromise.then(() => {
             if (this.isClosed) {
                 throw new Error("Language server client is closed");
             }
             if (
                 METHOD_TO_STATIC_CAPABILITY[method] &&
+                !registrationMayBePending &&
                 !(capabilityWasAvailable || this.hasCapability(method))
             ) {
                 throw new Error(

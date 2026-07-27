@@ -464,6 +464,40 @@ describe("document synchronization", () => {
         expect(didChange).not.toHaveBeenCalled();
     });
 
+    it("sends an early change when another view already opened the document", async () => {
+        // The shared client suppresses the second didOpen, so nothing carries
+        // this view's text and its change must not be dropped.
+        const client = createFakeClient({
+            capabilities: { textDocumentSync: 2 },
+        });
+        const didChange = vi.fn(async () => {});
+        stubClient(client, {
+            textDocumentDidOpen: vi.fn().mockResolvedValue(false),
+            textDocumentDidChange: didChange,
+        });
+        const view = createView("hello");
+        const plugin = createPlugin(view, client);
+
+        view.dispatch({ changes: { from: 5, insert: "!" } });
+        plugin.update(fakeUpdate(view, "hello", "!"));
+        await flushTicks();
+
+        expect(didChange).toHaveBeenCalledWith(
+            expect.objectContaining({
+                contentChanges: [
+                    {
+                        range: {
+                            start: { line: 0, character: 5 },
+                            end: { line: 0, character: 5 },
+                        },
+                        text: "!",
+                    },
+                ],
+            }),
+        );
+        plugin.destroy();
+    });
+
     it("sends a change made after didOpen read the document", async () => {
         const order: string[] = [];
         const openStarted = deferred<void>();
