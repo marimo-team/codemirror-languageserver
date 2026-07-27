@@ -331,6 +331,8 @@ describe("close()", () => {
         client.close();
 
         expect(client.ready).toBe(false);
+        // The transport is torn down once the shutdown response lands
+        await flushTicks();
         expect(closeSpy).toHaveBeenCalled();
 
         // Server requests arriving after close are no longer answered

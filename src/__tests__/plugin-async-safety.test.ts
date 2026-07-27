@@ -422,7 +422,7 @@ describe("request failure handling", () => {
 });
 
 describe("document synchronization", () => {
-    it("does not send didChange before didOpen has completed", async () => {
+    it("drops a change that raced didOpen, which already carries the text", async () => {
         const order: string[] = [];
         const init = deferred<void>();
         const client = createFakeClient({
@@ -451,13 +451,52 @@ describe("document synchronization", () => {
         init.resolve();
         await flushTicks();
 
-        expect(order).toEqual(["didOpen", "didChange"]);
+        // didOpen reads the document after the edit, so replaying the edit as
+        // a didChange would apply the insertion to the server twice
+        expect(order).toEqual(["didOpen"]);
         expect(didOpen).toHaveBeenCalledWith({
             textDocument: expect.objectContaining({
                 uri: "file:///test.ts",
                 text: "hello!",
                 version: 0,
             }),
+        });
+        expect(didChange).not.toHaveBeenCalled();
+    });
+
+    it("sends a change made after didOpen read the document", async () => {
+        const order: string[] = [];
+        const openStarted = deferred<void>();
+        const finishOpen = deferred<void>();
+        const client = createFakeClient({
+            capabilities: { textDocumentSync: 2 },
+        });
+        const didOpen = vi.fn(async () => {
+            order.push("didOpen");
+            openStarted.resolve();
+            await finishOpen.promise;
+        });
+        const didChange = vi.fn(async () => {
+            order.push("didChange");
+        });
+        stubClient(client, {
+            textDocumentDidOpen: didOpen,
+            textDocumentDidChange: didChange,
+        });
+        const view = createView("hello");
+        const plugin = createPlugin(view, client);
+
+        // The edit lands while didOpen is in flight, so its text snapshot
+        // ("hello") predates the change and the change must still be sent
+        await openStarted.promise;
+        view.dispatch({ changes: { from: 5, insert: "!" } });
+        plugin.update(fakeUpdate(view, "hello", "!"));
+        finishOpen.resolve();
+        await flushTicks();
+
+        expect(order).toEqual(["didOpen", "didChange"]);
+        expect(didOpen).toHaveBeenCalledWith({
+            textDocument: expect.objectContaining({ text: "hello" }),
         });
         expect(didChange).toHaveBeenCalledWith(
             expect.objectContaining({

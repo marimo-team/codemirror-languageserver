@@ -1,64 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-    ErrorCodes,
-    JSONRPCClient,
-    type JSONRPCMessage,
-    type Transport,
-} from "../jsonrpc.js";
-
-class ControlledTransport implements Transport {
-    readonly sent: JSONRPCMessage[] = [];
-    closed = false;
-    throwOnSend = false;
-    private handler?: (message: JSONRPCMessage) => void;
-    private resolveConnect!: () => void;
-    private rejectConnect!: (reason: unknown) => void;
-    private readonly connectPromise = new Promise<void>((resolve, reject) => {
-        this.resolveConnect = resolve;
-        this.rejectConnect = reject;
-    });
-
-    constructor(private readonly autoConnect = true) {
-        this.connectPromise.catch(() => {});
-    }
-
-    connect(): Promise<void> {
-        if (this.autoConnect) {
-            this.resolveConnect();
-        }
-        return this.connectPromise;
-    }
-
-    send(message: JSONRPCMessage): void {
-        if (this.throwOnSend) {
-            throw new Error("send failed");
-        }
-        this.sent.push(message);
-    }
-
-    onMessage(handler: (message: JSONRPCMessage) => void): () => void {
-        this.handler = handler;
-        return () => {
-            this.handler = undefined;
-        };
-    }
-
-    close(): void {
-        this.closed = true;
-    }
-
-    receive(message: JSONRPCMessage): void {
-        this.handler?.(message);
-    }
-
-    openConnection(): void {
-        this.resolveConnect();
-    }
-
-    failConnection(reason: unknown): void {
-        this.rejectConnect(reason);
-    }
-}
+import { ErrorCodes, JSONRPCClient, type JSONRPCMessage } from "../jsonrpc.js";
+import { ControlledTransport } from "./controlled-transport.js";
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -441,5 +383,28 @@ describe("well-formed traffic (regression guards)", () => {
 
         expect(onNotification).toHaveBeenCalledWith(message);
         expect(onRequest).not.toHaveBeenCalled();
+    });
+
+    it("fails a request made after the connection dropped, without waiting for the timeout", async () => {
+        let closeHandler: ((error: Error) => void) | undefined;
+        const transport = new ControlledTransport();
+        const withClose = Object.assign(transport, {
+            onClose(handler: (error: Error) => void) {
+                closeHandler = handler;
+                return () => {
+                    closeHandler = undefined;
+                };
+            },
+        });
+        const client = new JSONRPCClient(withClose);
+        await tick();
+
+        closeHandler?.(new Error("socket died"));
+
+        // A 60s timeout would hide a regression here; the rejection must not
+        // depend on the timer firing.
+        const later = client.request("textDocument/hover", {}, 60_000);
+        await expect(later).rejects.toThrow("socket died");
+        expect(pendingMap(client).size).toBe(0);
     });
 });

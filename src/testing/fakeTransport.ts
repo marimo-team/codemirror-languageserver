@@ -10,6 +10,11 @@ export interface FakeTransportOptions {
      * @default true
      */
     autoInitialize?: boolean;
+    /**
+     * Auto-answer the `shutdown` request so the client proceeds to `exit`.
+     * @default true
+     */
+    autoShutdown?: boolean;
 }
 
 /**
@@ -31,6 +36,15 @@ export class FakeTransport implements Transport {
     send(message: JSONRPCMessage): void {
         this.sent.push(message);
         const auto = this.options.autoInitialize ?? true;
+        if (
+            (this.options.autoShutdown ?? true) &&
+            "id" in message &&
+            "method" in message &&
+            message.method === "shutdown"
+        ) {
+            this.receive({ jsonrpc: "2.0", id: message.id, result: null });
+            return;
+        }
         if (
             auto &&
             "id" in message &&

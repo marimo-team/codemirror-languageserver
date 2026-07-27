@@ -131,6 +131,7 @@ export class JSONRPCClient {
     private nextId = 0;
     private closed = false;
     private isConnected = false;
+    private closeError?: Error;
     private notificationHandler?: (notification: JSONRPCNotification) => void;
     private requestHandler?: (request: JSONRPCRequest) => void;
 
@@ -140,6 +141,10 @@ export class JSONRPCClient {
             this.receive(message),
         );
         this.disconnectClose = transport.onClose?.((error) => {
+            // The connection is gone for good, so remember the failure: later
+            // requests must fail fast instead of waiting out their timeout on
+            // a socket that can never answer.
+            this.closeError ??= error;
             for (const id of [...this.pending.keys()]) {
                 this.settle(id, (pending) => pending.reject(error));
             }
@@ -180,6 +185,9 @@ export class JSONRPCClient {
             return Promise.reject(
                 new RPCError(ErrorCodes.InternalError, "Client closed"),
             );
+        }
+        if (this.closeError) {
+            return Promise.reject(this.closeError);
         }
         const id = this.nextId++;
         return new Promise<unknown>((resolve, reject) => {

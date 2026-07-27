@@ -623,14 +623,18 @@ export class LanguageServerClient {
         this.dynamicCapabilities.clear();
         this.documentOpenCounts.clear();
         if (this.capabilities) {
-            const shutdown = this.client.request(
-                "shutdown",
-                null,
-                this.timeout,
-            );
-            shutdown.catch(() => {});
-            const exit = this.client.notify("exit", undefined);
-            exit.catch(() => {});
+            // Per the LSP lifecycle, `exit` follows the shutdown *response*.
+            // Tearing the transport down immediately would cut the server off
+            // mid-shutdown, so wait for it - bounded by the request timeout,
+            // and unblocked by the rejection when it expires.
+            void this.client
+                .request("shutdown", null, this.timeout)
+                .catch(() => {})
+                .then(() => {
+                    this.client.notify("exit", undefined).catch(() => {});
+                    this.client.close();
+                });
+            return;
         }
         this.client.close();
     }
@@ -845,16 +849,14 @@ export class LanguageServerClient {
                 LSPRequestMap[K][1]
             >;
         }
-        const requestedDuringInitialization = !(
-            this.ready || this.capabilities
-        );
+        // A capability the server has since dropped still counts, so a request
+        // issued while it was advertised is not failed by a later change.
         const capabilityWasAvailable = this.hasCapability(method);
         return this.initializePromise.then(() => {
             if (this.isClosed) {
                 throw new Error("Language server client is closed");
             }
             if (
-                !requestedDuringInitialization &&
                 METHOD_TO_STATIC_CAPABILITY[method] &&
                 !(capabilityWasAvailable || this.hasCapability(method))
             ) {

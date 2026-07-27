@@ -231,7 +231,73 @@ namespace InsertTextFormat {
     export const Snippet = 2;
 }
 
-const FINAL_SNIPPET_TABSTOP = "999999";
+// The `\\.` and `[^\\}]` branches are disjoint so the scanner cannot backtrack
+// exponentially over a run of backslashes.
+const CHOICE_TABSTOP = /^\$\{(\d+)\|((?:\\.|[^\\}])*)\|\}/;
+const BRACED_VARIABLE = /^\$\{([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?\}/;
+const BARE_VARIABLE = /^\$[A-Za-z_][A-Za-z0-9_]*/;
+
+/**
+ * Resolves LSP choice tabstops (to their first choice) and variables (to their
+ * fallback text), leaving tabstops alone. Escape sequences are copied verbatim
+ * so an escaped `\$TM_FILENAME` keeps its literal text instead of being
+ * resolved as a variable.
+ */
+function resolveSnippetChoicesAndVariables(
+    snippet: string,
+    renderChoice: (tabstop: string, choice: string) => string,
+): string {
+    let result = "";
+    let i = 0;
+    while (i < snippet.length) {
+        const ch = snippet[i];
+        if (ch === "\\" && i + 1 < snippet.length) {
+            result += snippet.slice(i, i + 2);
+            i += 2;
+            continue;
+        }
+        if (ch === "$") {
+            const rest = snippet.slice(i);
+            const choice = CHOICE_TABSTOP.exec(rest);
+            if (choice) {
+                const firstChoice = (choice[2] ?? "").split(/(?<!\\),/, 1)[0];
+                result += renderChoice(
+                    choice[1] ?? "",
+                    (firstChoice ?? "").replaceAll("\\,", ","),
+                );
+                i += choice[0].length;
+                continue;
+            }
+            const variable = BRACED_VARIABLE.exec(rest);
+            if (variable) {
+                result += variable[2] ?? "";
+                i += variable[0].length;
+                continue;
+            }
+            const bareVariable = BARE_VARIABLE.exec(rest);
+            if (bareVariable) {
+                i += bareVariable[0].length;
+                continue;
+            }
+        }
+        result += ch;
+        i += 1;
+    }
+    return result;
+}
+
+/**
+ * The field number to give LSP's `$0`. LSP reserves `$0` for the final cursor
+ * position while CodeMirror visits fields in numeric order, so it has to sort
+ * after every other tabstop in this snippet - and not collide with one.
+ */
+function finalTabstopField(snippet: string): string {
+    let max = 0;
+    for (const match of snippet.matchAll(/\$\{?(\d+)/g)) {
+        max = Math.max(max, Number(match[1]));
+    }
+    return String(max + 1);
+}
 
 /**
  * Converts an LSP snippet to a CodeMirror snippet.
@@ -243,20 +309,11 @@ const FINAL_SNIPPET_TABSTOP = "999999";
  * text would turn into an active placeholder.
  */
 export function convertSnippet(snippet: string): string {
-    const normalizedSnippet = snippet
-        .replace(
-            /\$\{(\d+)\|((?:\\.|[^}])*)\|\}/g,
-            (_match, tabstop: string, choices: string) => {
-                const firstChoice = choices.split(/(?<!\\),/, 1)[0] ?? "";
-                return `\${${tabstop}:${firstChoice.replaceAll("\\,", ",")}}`;
-            },
-        )
-        .replace(
-            /\$\{([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?\}/g,
-            (_match, _name: string, fallback: string | undefined) =>
-                fallback ?? "",
-        )
-        .replace(/\$[A-Za-z_][A-Za-z0-9_]*/g, "");
+    const normalizedSnippet = resolveSnippetChoicesAndVariables(
+        snippet,
+        (tabstop, choice) => `\${${tabstop}:${choice}}`,
+    );
+    const finalTabstop = finalTabstopField(normalizedSnippet);
     let result = "";
     let i = 0;
     while (i < normalizedSnippet.length) {
@@ -290,8 +347,7 @@ export function convertSnippet(snippet: string): string {
             const digits = /^\d+/.exec(normalizedSnippet.slice(i + 1));
             if (digits) {
                 // CodeMirror visits fields numerically; LSP reserves $0 for last.
-                const field =
-                    digits[0] === "0" ? FINAL_SNIPPET_TABSTOP : digits[0];
+                const field = digits[0] === "0" ? finalTabstop : digits[0];
                 result += `\${${field}}`;
                 i += 1 + digits[0].length;
             } else {
@@ -316,18 +372,10 @@ export function convertSnippet(snippet: string): string {
  * sequences like `\${1:x}` render as their literal text.
  */
 function convertSnippetToPlainText(snippet: string): string {
-    const normalizedSnippet = snippet
-        .replace(
-            /\$\{(\d+)\|((?:\\.|[^}])*)\|\}/g,
-            (_match, _tabstop: string, choices: string) =>
-                (choices.split(/(?<!\\),/, 1)[0] ?? "").replaceAll("\\,", ","),
-        )
-        .replace(
-            /\$\{([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?\}/g,
-            (_match, _name: string, fallback: string | undefined) =>
-                fallback ?? "",
-        )
-        .replace(/\$[A-Za-z_][A-Za-z0-9_]*/g, "");
+    const normalizedSnippet = resolveSnippetChoicesAndVariables(
+        snippet,
+        (_tabstop, choice) => choice,
+    );
     let result = "";
     let i = 0;
     while (i < normalizedSnippet.length) {

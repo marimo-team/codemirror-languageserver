@@ -814,6 +814,8 @@ describe("document change synchronization", () => {
             sendIncrementalChanges: true,
         });
 
+        // Let didOpen settle first: a change racing it is carried by didOpen
+        await flushTicks();
         plugin.update(fakeUpdate(view, "hello", "!"));
         await flushTicks();
 
@@ -833,6 +835,8 @@ describe("document change synchronization", () => {
             sendIncrementalChanges: true,
         });
 
+        // Let didOpen settle first: a change racing it is carried by didOpen
+        await flushTicks();
         plugin.update(fakeUpdate(view, "hello", "!"));
         await flushTicks();
 
@@ -890,6 +894,8 @@ describe("document change synchronization", () => {
             sendIncrementalChanges: true,
         });
 
+        // Let didOpen settle first: a change racing it is carried by didOpen
+        await flushTicks();
         plugin.update(fakeUpdate(view, "hello", "!"));
         await flushTicks();
 

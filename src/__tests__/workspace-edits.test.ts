@@ -93,6 +93,51 @@ afterEach(() => {
     vi.restoreAllMocks();
 });
 
+describe("malformed workspace edits", () => {
+    it("rejects a primitive documentChanges entry instead of throwing", async () => {
+        const view = createView("hello world");
+        const plugin = createPlugin(view);
+
+        await expect(
+            applyWorkspaceEdit(plugin, view, {
+                documentChanges: ["nope", 7, null],
+            } as unknown as LSP.WorkspaceEdit),
+        ).resolves.toBe(false);
+        expect(view.state.doc.toString()).toBe("hello world");
+    });
+
+    it("rejects a documentChanges entry whose textDocument is not an object", async () => {
+        const view = createView("hello world");
+        const plugin = createPlugin(view);
+
+        await expect(
+            applyWorkspaceEdit(plugin, view, {
+                documentChanges: [
+                    { textDocument: "file:///test.ts", edits: [] },
+                ],
+            } as unknown as LSP.WorkspaceEdit),
+        ).resolves.toBe(false);
+        expect(view.state.doc.toString()).toBe("hello world");
+    });
+
+    it("rejects a primitive edit inside documentChanges", async () => {
+        const view = createView("hello world");
+        const plugin = createPlugin(view);
+
+        await expect(
+            applyWorkspaceEdit(plugin, view, {
+                documentChanges: [
+                    {
+                        textDocument: { uri: DOCUMENT_URI, version: null },
+                        edits: ["howdy"],
+                    },
+                ],
+            } as unknown as LSP.WorkspaceEdit),
+        ).resolves.toBe(false);
+        expect(view.state.doc.toString()).toBe("hello world");
+    });
+});
+
 describe("edit atomicity", () => {
     it("rejects a workspace edit whose text edits overlap", async () => {
         const view = createView("hello world");
@@ -190,6 +235,8 @@ describe("document version safety", () => {
         const client = createFakeClient();
         const view = createView("hello world");
         const plugin = createPlugin(view, client);
+        // Changes racing didOpen are carried by didOpen, so let it settle
+        await flushTicks();
 
         // Three keystrokes take the document to version 3
         typeAtEnd(view, plugin, "!");
@@ -216,6 +263,7 @@ describe("document version safety", () => {
         const client = createFakeClient();
         const view = createView("hello world");
         const plugin = createPlugin(view, client);
+        await flushTicks();
 
         typeAtEnd(view, plugin, "!");
         await flushTicks();

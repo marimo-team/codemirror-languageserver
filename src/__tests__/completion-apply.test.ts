@@ -2,9 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import type * as LSP from "vscode-languageserver-protocol";
 import { convertCompletionItem, sortCompletionItems } from "../completion.js";
 import {
-    createCompletionView as createView,
+    createView,
     defaultCompletionOptions as defaultOptions,
-} from "./completion-test-utils.js";
+} from "./test-utils.js";
 
 describe("convertCompletionItem type mapping", () => {
     it("does not crash on non-standard completion item kinds", () => {

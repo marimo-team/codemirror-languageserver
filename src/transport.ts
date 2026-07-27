@@ -66,7 +66,7 @@ export class WebSocketTransport implements Transport {
                 if (this.socket !== socket) {
                     return;
                 }
-                this.receiveFrame(event.data);
+                this.receiveFrame(event.data, socket);
             });
 
             // An error or a close before `open` rejects connect() so awaiters
@@ -145,7 +145,7 @@ export class WebSocketTransport implements Transport {
         this.socket = undefined;
     }
 
-    private receiveFrame(data: unknown): void {
+    private receiveFrame(data: unknown, source: WebSocket): void {
         if (
             data instanceof ArrayBuffer ||
             Object.prototype.toString.call(data) === "[object ArrayBuffer]"
@@ -156,7 +156,15 @@ export class WebSocketTransport implements Transport {
             return;
         }
         if (typeof Blob !== "undefined" && data instanceof Blob) {
-            data.text().then((text) => this.dispatchFrame(text));
+            // Reading a Blob is async, so the connection may have been
+            // replaced or closed by the time the text arrives; a frame from a
+            // dead socket must not settle requests on the new session.
+            data.text().then((text) => {
+                if (this.socket !== source) {
+                    return;
+                }
+                this.dispatchFrame(text);
+            });
             return;
         }
         this.dispatchFrame(String(data));

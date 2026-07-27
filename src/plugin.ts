@@ -362,6 +362,9 @@ export class LanguageServerPlugin implements PluginValue {
     private disposeListener?: () => void;
     private destroyed = false;
     private documentOpened = false;
+    // Set the moment `didOpen` snapshots the document text. Changes made
+    // before that point are already carried by the snapshot.
+    private documentTextSnapshotted = false;
     private documentReady: Promise<void>;
     private signatureHelpRequestId = 0;
     /** Dismisses the currently open code action menu, if any. */
@@ -502,13 +505,15 @@ export class LanguageServerPlugin implements PluginValue {
         if (this.destroyed) {
             return;
         }
+        // Read the document at didOpen time so edits made while the
+        // server was still initializing are not lost
+        const text = documentText ?? this.view.state.doc.toString();
+        this.documentTextSnapshotted = true;
         await this.client.textDocumentDidOpen({
             textDocument: {
                 uri: this.documentUri,
                 languageId: this.languageId,
-                // Read the document at didOpen time so edits made while the
-                // server was still initializing are not lost
-                text: documentText ?? this.view.state.doc.toString(),
+                text,
                 version: this.documentVersion,
             },
         });
@@ -545,8 +550,16 @@ export class LanguageServerPlugin implements PluginValue {
     public async sendChanges(
         contentChanges: LSP.TextDocumentContentChangeEvent[],
     ) {
+        // Sampled before awaiting: `update()` calls this synchronously, so
+        // this reflects the document state the change was made against.
+        const changedAfterSnapshot = this.documentTextSnapshotted;
         if (!this.documentOpened) {
             await this.documentReady;
+            if (!changedAfterSnapshot) {
+                // `didOpen` sent the document text as of a later moment, so
+                // resending this change would apply it to the server twice.
+                return;
+            }
         }
         if (!this.client.ready) {
             return;
@@ -2332,11 +2345,22 @@ export class LanguageServerPlugin implements PluginValue {
         if (documentChanges.length > 0) {
             const edits: LSP.TextEdit[] = [];
             for (const docChange of documentChanges) {
-                if (!(docChange && "textDocument" in docChange)) {
+                if (
+                    typeof docChange !== "object" ||
+                    docChange === null ||
+                    !("textDocument" in docChange)
+                ) {
                     showErrorMessage(
                         view,
                         "File creation, deletion, or renaming operations not supported yet",
                     );
+                    return false;
+                }
+                if (
+                    typeof docChange.textDocument !== "object" ||
+                    docChange.textDocument === null
+                ) {
+                    showErrorMessage(view, "Malformed workspace edit");
                     return false;
                 }
                 if (docChange.textDocument.uri !== this.documentUri) {
@@ -2360,7 +2384,11 @@ export class LanguageServerPlugin implements PluginValue {
                     return false;
                 }
                 for (const docEdit of docChange.edits) {
-                    if (!("newText" in docEdit)) {
+                    if (
+                        typeof docEdit !== "object" ||
+                        docEdit === null ||
+                        !("newText" in docEdit)
+                    ) {
                         showErrorMessage(
                             view,
                             "Snippet edits not supported yet",

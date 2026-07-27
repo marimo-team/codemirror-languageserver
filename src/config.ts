@@ -25,6 +25,11 @@ const useLanguageId = createUseFirstOrThrow(
 );
 
 function isAbsoluteUri(value: string): boolean {
+    // `new URL()` tolerates surrounding whitespace, but the URI is forwarded
+    // verbatim as `textDocument.uri`, so padded values must be rejected.
+    if (value !== value.trim()) {
+        return false;
+    }
     try {
         const uri = new URL(value);
         return Boolean(uri.protocol);

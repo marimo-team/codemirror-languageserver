@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import type * as LSP from "vscode-languageserver-protocol";
 import { convertCompletionItem } from "../completion.js";
 import {
-    createCompletionView as createView,
+    createView,
     defaultCompletionOptions as defaultOptions,
-} from "./completion-test-utils.js";
+} from "./test-utils.js";
 
 /**
  * Applies a snippet-format completion over the whole document through the
@@ -85,6 +85,28 @@ describe("convertSnippet through the snippet apply path", () => {
         ).toBe(String.raw`C:\Users`);
     });
 
+    it("keeps an escaped variable literal instead of resolving it", () => {
+        // `\$TM_FILENAME` is escaped text, not a variable reference
+        expect(
+            applySnippet("fo", String.raw`\$TM_FILENAME`).state.doc.toString(),
+        ).toBe("$TM_FILENAME");
+        expect(
+            applySnippet(
+                "fo",
+                String.raw`\${TM_FILENAME}`,
+            ).state.doc.toString(),
+        ).toBe("${TM_FILENAME}");
+    });
+
+    it("sorts the final tabstop after a very high numbered tabstop", () => {
+        // A fixed sentinel would collide with, or sort before, `$999999`
+        const view = applySnippet("fo", "a${999999:x}b$0");
+        expect(view.state.doc.toString()).toBe("axb");
+        const { from, to } = view.state.selection.main;
+        // The first field visited is the numbered tabstop, not `$0`
+        expect(view.state.sliceDoc(from, to)).toBe("x");
+    });
+
     it("expands a plain numbered tabstop and selects it", () => {
         const view = applySnippet("fo", "foo(${1:arg})");
         expect(view.state.doc.toString()).toBe("foo(arg)");
@@ -109,6 +131,16 @@ describe("plain-text snippet conversion (snippets disabled)", () => {
         expect(
             applySnippet("fo", "foo(${1:arg})$0", false).state.doc.toString(),
         ).toBe("foo(arg)");
+    });
+
+    it("keeps an escaped variable literal in plain mode", () => {
+        expect(
+            applySnippet(
+                "fo",
+                String.raw`\$TM_FILENAME`,
+                false,
+            ).state.doc.toString(),
+        ).toBe("$TM_FILENAME");
     });
 
     it("keeps escaped snippet syntax literal in plain mode", () => {

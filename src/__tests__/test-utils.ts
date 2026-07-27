@@ -49,6 +49,13 @@ export function createFakeClient(overrides: FakeClientOverrides = {}) {
     } as any as LanguageServerClient;
 }
 
+export const defaultCompletionOptions = {
+    allowHTMLContent: false,
+    useSnippetOnCompletion: false,
+    hasResolveProvider: false,
+    resolveItem: vi.fn(),
+};
+
 export function createView(doc: string): EditorView {
     return new EditorView({
         state: EditorState.create({ doc }),

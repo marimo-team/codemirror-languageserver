@@ -328,3 +328,53 @@ describe("close and reconnect", () => {
         expect(socket.closed).toBe(true);
     });
 });
+
+// jsdom's Blob has no text() implementation, so supply one
+function blobFrame(value: unknown): Blob {
+    const text = JSON.stringify(value);
+    const blob = new Blob([text]);
+    Object.defineProperty(blob, "text", {
+        value: () => Promise.resolve(text),
+    });
+    return blob;
+}
+
+describe("blob frames", () => {
+    it("ignores a Blob frame that resolves after the socket was replaced", async () => {
+        const transport = new WebSocketTransport("ws://host/lsp");
+        const connected = transport.connect();
+        const first = lastSocket();
+        first.emitOpen();
+        await connected;
+
+        const handler = vi.fn();
+        transport.onMessage(handler);
+
+        // Reading a Blob is async; the reconnect lands before it resolves
+        first.emitRawMessage(
+            blobFrame({ jsonrpc: "2.0", id: 1, result: "old" }),
+        );
+        const reconnected = transport.connect();
+        lastSocket().emitOpen();
+        await reconnected;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("delivers a Blob frame from the live socket", async () => {
+        const transport = new WebSocketTransport("ws://host/lsp");
+        const connected = transport.connect();
+        const socket = lastSocket();
+        socket.emitOpen();
+        await connected;
+
+        const handler = vi.fn();
+        transport.onMessage(handler);
+        const message = { jsonrpc: "2.0", id: 1, result: "ok" };
+        socket.emitRawMessage(blobFrame(message));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(handler).toHaveBeenCalledWith(message);
+    });
+});

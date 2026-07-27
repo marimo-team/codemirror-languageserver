@@ -9,9 +9,9 @@ import {
     sortCompletionItems,
 } from "../completion.js";
 import {
-    createCompletionView as createView,
+    createView,
     defaultCompletionOptions as defaultOptions,
-} from "./completion-test-utils.js";
+} from "./test-utils.js";
 
 describe("resolveMainEdit", () => {
     const doc = Text.of(["hello world"]);

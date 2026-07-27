@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type * as LSP from "vscode-languageserver-protocol";
 import {
     formatContents,
     isEmptyDocumentation,
     isLSPMarkupContent,
     renderDocumentation,
+    sanitizeDocumentationHTML,
 } from "../utils.js";
 
 function renderHTML(
@@ -186,6 +187,14 @@ describe("malformed MarkupContent", () => {
         ).toBe(true);
     });
 
+    it("still renders a MarkedString whose language is not a string", () => {
+        const el = renderHTML({
+            language: { evil: true },
+            value: "const x = 1;",
+        } as unknown as LSP.MarkedString);
+        expect(el.textContent).toContain("const x = 1;");
+    });
+
     it("handles a MarkedString with a missing value", () => {
         const el = renderHTML({ language: "js" } as LSP.MarkedString);
         expect(el.textContent).not.toContain("undefined");
@@ -200,5 +209,52 @@ describe("malformed MarkupContent", () => {
         expect(() =>
             isEmptyDocumentation(a as unknown as LSP.MarkedString[]),
         ).not.toThrow();
+    });
+});
+
+describe("sanitizeDocumentationHTML", () => {
+    it("strips an xlink:href carrying a javascript: URL", () => {
+        const sanitized = sanitizeDocumentationHTML(
+            '<svg><a xlink:href="javascript:alert(1)">x</a></svg>',
+        );
+        expect(sanitized).not.toContain("javascript:");
+    });
+
+    it("keeps an xlink:href pointing at an http URL", () => {
+        const sanitized = sanitizeDocumentationHTML(
+            '<svg><a xlink:href="https://example.com/">x</a></svg>',
+        );
+        expect(sanitized).toContain("https://example.com/");
+    });
+
+    describe("without a DOM", () => {
+        afterEach(() => {
+            vi.unstubAllGlobals();
+        });
+
+        function sanitizeWithoutDOM(html: string): string {
+            vi.stubGlobal("document", undefined);
+            return sanitizeDocumentationHTML(html);
+        }
+
+        it("strips a tag that only appears once an inner tag is removed", () => {
+            expect(
+                sanitizeWithoutDOM("<scr<script>ipt>alert(1)</script>"),
+            ).not.toContain("<script");
+        });
+
+        it("strips a handler that only appears once an inner one is removed", () => {
+            const sanitized = sanitizeWithoutDOM(
+                '<div o onmouseover=x nclick="alert(1)">hi</div>',
+            );
+            expect(sanitized).not.toMatch(/\son[a-z]+\s*=/i);
+        });
+
+        it("blanks an xlink:href carrying a javascript: URL", () => {
+            const sanitized = sanitizeWithoutDOM(
+                '<a xlink:href="javascript:alert(1)">x</a>',
+            );
+            expect(sanitized).not.toContain("javascript:");
+        });
     });
 });

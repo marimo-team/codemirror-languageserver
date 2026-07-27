@@ -20,6 +20,13 @@ describe("posToOffset - malformed positions", () => {
         expect(posToOffset(doc, { line: 0, character: -5 })).toBeUndefined();
     });
 
+    it("should return undefined for a fractional character", () => {
+        // A fractional character would yield a fractional offset, which
+        // breaks range-based decoration and tooltip positioning
+        const doc = Text.of(["hello world"]);
+        expect(posToOffset(doc, { line: 0, character: 1.5 })).toBeUndefined();
+    });
+
     it("should return undefined for a NaN character", () => {
         const doc = Text.of(["hello world"]);
         expect(

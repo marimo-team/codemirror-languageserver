@@ -156,7 +156,9 @@ describe("initialize handshake", () => {
 
 describe("request gating", () => {
     it("sends initialize before any feature request", async () => {
-        const transport = new FakeTransport();
+        const transport = new FakeTransport({
+            capabilities: { hoverProvider: true },
+        });
         const client = makeClient({ transport });
         void client.textDocumentHover(hoverParams).catch(() => {});
         await flushTicks();
@@ -177,6 +179,20 @@ describe("request gating", () => {
         void client.textDocumentHover(hoverParams).catch(() => {});
         await flushTicks();
 
+        expect(sentRequests(transport, "textDocument/hover")).toEqual([]);
+    });
+
+    it("gates a request queued during initialization on the final capabilities", async () => {
+        // The request is issued before the handshake answers, so the decision
+        // can only be made once the server's capabilities are known.
+        const transport = new FakeTransport({ capabilities: {} });
+        const client = makeClient({ transport });
+
+        const hover = client.textDocumentHover(hoverParams);
+        hover.catch(() => {});
+        await flushTicks();
+
+        await expect(hover).rejects.toThrow(/does not support/i);
         expect(sentRequests(transport, "textDocument/hover")).toEqual([]);
     });
 
@@ -230,6 +246,8 @@ describe("shutdown and teardown", () => {
         client.close();
         expect(() => client.close()).not.toThrow();
         expect(client.ready).toBe(false);
+        // The transport is torn down once the shutdown response lands
+        await flushTicks();
         expect(transportClose).toHaveBeenCalledTimes(1);
     });
 

@@ -9,7 +9,7 @@ export function posToOffset(
     pos: { line: number; character: number },
 ): number | undefined {
     if (
-        !(Number.isInteger(pos.line) && Number.isFinite(pos.character)) ||
+        !(Number.isInteger(pos.line) && Number.isInteger(pos.character)) ||
         pos.line < 0 ||
         pos.character < 0
     ) {
@@ -98,6 +98,24 @@ function isSafeDocumentationUrl(value: string): boolean {
 }
 
 /**
+ * Applies removal-only patterns until the value stops changing. Every pattern
+ * only deletes, so the string strictly shrinks and the loop terminates.
+ */
+function stripUntilStable(value: string, patterns: RegExp[]): string {
+    let current = value;
+    for (;;) {
+        let next = current;
+        for (const pattern of patterns) {
+            next = next.replace(pattern, "");
+        }
+        if (next === current) {
+            return current;
+        }
+        current = next;
+    }
+}
+
+/**
  * Removes active content from server-provided documentation HTML.
  *
  * Markdown renderers are host-configurable, so sanitization happens after
@@ -105,20 +123,21 @@ function isSafeDocumentationUrl(value: string): boolean {
  */
 export function sanitizeDocumentationHTML(html: string): string {
     if (typeof document === "undefined") {
-        return html
-            .replace(
-                /<\s*\/?\s*(?:script|style|iframe|object|embed|img)\b[^>]*>/gi,
-                "",
-            )
-            .replace(/\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "")
-            .replace(/\s+srcdoc\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "")
-            .replace(
-                /\s+(href|src)\s*=\s*(["'])(.*?)\2/gi,
-                (attribute, name: string, quote: string, value: string) =>
-                    isSafeDocumentationUrl(value)
-                        ? attribute
-                        : ` ${name}=${quote}${quote}`,
-            );
+        // Each removal can splice together text that forms a fresh match
+        // (`<scr<script>ipt>`), so strip repeatedly until the input stops
+        // shrinking rather than in a single pass.
+        const stripped = stripUntilStable(html, [
+            /<\s*\/?\s*(?:script|style|iframe|object|embed|img)\b[^>]*>/gi,
+            /\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi,
+            /\s+srcdoc\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi,
+        ]);
+        return stripped.replace(
+            /\s+((?:xlink:)?href|src)\s*=\s*(["'])(.*?)\2/gi,
+            (attribute, name: string, quote: string, value: string) =>
+                isSafeDocumentationUrl(value)
+                    ? attribute
+                    : ` ${name}=${quote}${quote}`,
+        );
     }
 
     const template = document.createElement("template");
@@ -134,7 +153,9 @@ export function sanitizeDocumentationHTML(html: string): string {
             if (
                 name.startsWith("on") ||
                 name === "srcdoc" ||
-                ((name === "href" || name === "src") &&
+                // `xlink:href` is the SVG-namespaced form of `href` and is
+                // just as capable of carrying a `javascript:` URL.
+                ((name === "href" || name === "src" || name === "xlink:href") &&
                     !isSafeDocumentationUrl(attribute.value))
             ) {
                 element.removeAttribute(attribute.name);
@@ -194,8 +215,12 @@ function formatContentsInner(
         return escapeHTML(contents);
     }
     if (isLSPMarkedStringObject(contents)) {
-        // Legacy MarkedString form: render as a fenced code block
-        const language = contents.language.replace(/[^\w+-]/g, "");
+        // Legacy MarkedString form: render as a fenced code block. A
+        // malformed `language` must not break rendering of the value.
+        const language =
+            typeof contents.language === "string"
+                ? contents.language.replace(/[^\w+-]/g, "")
+                : "";
         return markdownRenderer(
             `\`\`\`${language}\n${contents.value ?? ""}\n\`\`\``,
         );

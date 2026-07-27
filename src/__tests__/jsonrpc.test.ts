@@ -4,65 +4,8 @@ import {
     JSONRPCClient,
     type JSONRPCMessage,
     RPCError,
-    type Transport,
 } from "../jsonrpc.js";
-
-/** A transport whose connection and inbound frames the test drives by hand. */
-class ControlledTransport implements Transport {
-    readonly sent: JSONRPCMessage[] = [];
-    closed = false;
-    throwOnSend = false;
-    private handler?: (message: JSONRPCMessage) => void;
-    private resolveConnect!: () => void;
-    private rejectConnect!: (reason: unknown) => void;
-    private readonly connectPromise = new Promise<void>((resolve, reject) => {
-        this.resolveConnect = resolve;
-        this.rejectConnect = reject;
-    });
-
-    constructor(private readonly autoConnect = true) {}
-
-    connect(): Promise<void> {
-        if (this.autoConnect) {
-            this.resolveConnect();
-        }
-        return this.connectPromise;
-    }
-
-    send(message: JSONRPCMessage): void {
-        if (this.throwOnSend) {
-            throw new Error("send failed");
-        }
-        this.sent.push(message);
-    }
-
-    onMessage(handler: (message: JSONRPCMessage) => void): () => void {
-        this.handler = handler;
-        return () => {
-            this.handler = undefined;
-        };
-    }
-
-    close(): void {
-        this.closed = true;
-    }
-
-    receive(message: JSONRPCMessage): void {
-        this.handler?.(message);
-    }
-
-    openConnection(): void {
-        this.resolveConnect();
-    }
-
-    failConnection(reason: unknown): void {
-        this.rejectConnect(reason);
-    }
-
-    get hasHandler(): boolean {
-        return this.handler !== undefined;
-    }
-}
+import { ControlledTransport } from "./controlled-transport.js";
 
 /** Flush pending microtasks (the connect→send hop). */
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
