@@ -98,6 +98,33 @@ describe("convertSnippet through the snippet apply path", () => {
         ).toBe("${TM_FILENAME}");
     });
 
+    it("treats the braced final tabstop like the bare one", () => {
+        // `${0}` must not stay CodeMirror field 0, or it is visited first
+        const view = applySnippet("fo", "foo(${1:arg})${0}");
+        expect(view.state.doc.toString()).toBe("foo(arg)");
+        const { from, to } = view.state.selection.main;
+        expect(view.state.sliceDoc(from, to)).toBe("arg");
+    });
+
+    it("keeps the default text of a braced final tabstop", () => {
+        const view = applySnippet("fo", "foo(${1:arg})${0:end}");
+        expect(view.state.doc.toString()).toBe("foo(arg)end");
+        const { from, to } = view.state.selection.main;
+        expect(view.state.sliceDoc(from, to)).toBe("arg");
+    });
+
+    it("splits choices on a comma that follows an escaped backslash", () => {
+        // `a\\` is a literal backslash, so the comma after it is a delimiter
+        // and the choice list is ["a\", "b"]
+        const view = applySnippet("fo", "${1|a\\\\,b|}");
+        expect(view.state.doc.toString()).toBe("a\\");
+    });
+
+    it("keeps an escaped comma inside a single choice", () => {
+        const view = applySnippet("fo", "${1|a\\,b|}");
+        expect(view.state.doc.toString()).toBe("a,b");
+    });
+
     it("sorts the final tabstop after a very high numbered tabstop", () => {
         // A fixed sentinel would collide with, or sort before, `$999999`
         const view = applySnippet("fo", "a${999999:x}b$0");

@@ -98,21 +98,34 @@ function isSafeDocumentationUrl(value: string): boolean {
 }
 
 /**
- * Applies removal-only patterns until the value stops changing. Every pattern
- * only deletes, so the string strictly shrinks and the loop terminates.
+ * How many removal passes the no-DOM sanitizer will make before giving up on
+ * reaching a fixed point. Well-formed markup needs one pass plus one to
+ * confirm; deeper nesting only comes from input built to defeat the stripper.
  */
-function stripUntilStable(value: string, patterns: RegExp[]): string {
+const MAX_STRIP_PASSES = 5;
+
+/**
+ * Applies removal-only patterns until the value stops changing, capping the
+ * number of whole-string passes so hostile input cannot force quadratic work.
+ *
+ * @returns The stripped value and whether it reached a fixed point.
+ */
+function stripUntilStable(
+    value: string,
+    patterns: RegExp[],
+): { html: string; stable: boolean } {
     let current = value;
-    for (;;) {
+    for (let pass = 0; pass < MAX_STRIP_PASSES; pass++) {
         let next = current;
         for (const pattern of patterns) {
             next = next.replace(pattern, "");
         }
         if (next === current) {
-            return current;
+            return { html: current, stable: true };
         }
         current = next;
     }
+    return { html: current, stable: false };
 }
 
 /**
@@ -126,17 +139,27 @@ export function sanitizeDocumentationHTML(html: string): string {
         // Each removal can splice together text that forms a fresh match
         // (`<scr<script>ipt>`), so strip repeatedly until the input stops
         // shrinking rather than in a single pass.
-        const stripped = stripUntilStable(html, [
+        const { html: stripped, stable } = stripUntilStable(html, [
             /<\s*\/?\s*(?:script|style|iframe|object|embed|img)\b[^>]*>/gi,
             /\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi,
             /\s+srcdoc\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi,
         ]);
+        if (!stable) {
+            // Nesting this deep is not something a renderer emits. Rather than
+            // keep rescanning, drop to text: escaped markup renders nothing.
+            return escapeHTML(html);
+        }
+        // The value may be quoted or bare; capture either and validate the
+        // URL itself, so `href=javascript:...` cannot slip past.
         return stripped.replace(
-            /\s+((?:xlink:)?href|src)\s*=\s*(["'])(.*?)\2/gi,
-            (attribute, name: string, quote: string, value: string) =>
-                isSafeDocumentationUrl(value)
+            /\s+((?:xlink:)?href|src)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi,
+            (attribute, name: string, rawValue: string) => {
+                const quoted = rawValue[0] === '"' || rawValue[0] === "'";
+                const value = quoted ? rawValue.slice(1, -1) : rawValue;
+                return isSafeDocumentationUrl(value)
                     ? attribute
-                    : ` ${name}=${quote}${quote}`,
+                    : ` ${name}=""`;
+            },
         );
     }
 

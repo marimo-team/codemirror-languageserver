@@ -244,8 +244,10 @@ describe("sanitizeDocumentationHTML", () => {
         });
 
         it("strips a handler that only appears once an inner one is removed", () => {
+            // Removing `srcdoc="x"` joins `o` and `nclick` into `onclick`,
+            // which only a second pass can see
             const sanitized = sanitizeWithoutDOM(
-                '<div o onmouseover=x nclick="alert(1)">hi</div>',
+                '<div o srcdoc="x"nclick="alert(1)">hi</div>',
             );
             expect(sanitized).not.toMatch(/\son[a-z]+\s*=/i);
         });
@@ -255,6 +257,31 @@ describe("sanitizeDocumentationHTML", () => {
                 '<a xlink:href="javascript:alert(1)">x</a>',
             );
             expect(sanitized).not.toContain("javascript:");
+        });
+
+        it("blanks an unquoted URL attribute carrying a javascript: URL", () => {
+            for (const attribute of ["href", "src", "xlink:href"]) {
+                const sanitized = sanitizeWithoutDOM(
+                    `<a ${attribute}=javascript:alert(1)>x</a>`,
+                );
+                expect(sanitized).not.toContain("javascript:");
+            }
+        });
+
+        it("keeps an unquoted http URL", () => {
+            expect(
+                sanitizeWithoutDOM("<a href=https://example.com/>x</a>"),
+            ).toContain("https://example.com/");
+        });
+
+        it("falls back to escaped text instead of rescanning pathological input", () => {
+            // Nesting deep enough to need more passes than the cap degrades to
+            // plain text rather than quadratic work
+            const hostile = `${"<scr".repeat(50)}<script>${"ipt>".repeat(50)}`;
+            const sanitized = sanitizeWithoutDOM(hostile);
+            expect(sanitized).not.toContain("<script");
+            expect(sanitized).not.toContain("<scr>");
+            expect(sanitized.startsWith("&lt;")).toBe(true);
         });
     });
 });

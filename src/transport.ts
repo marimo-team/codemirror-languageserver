@@ -171,6 +171,11 @@ export class WebSocketTransport implements Transport {
     }
 
     private dispatchFrame(frame: string): void {
+        // A peer close leaves `socket` assigned, so a frame that was already
+        // in flight (or an async Blob read) can still land here afterwards.
+        if (this.closed) {
+            return;
+        }
         let parsed: unknown;
         try {
             parsed = JSON.parse(frame);

@@ -236,6 +236,10 @@ namespace InsertTextFormat {
 const CHOICE_TABSTOP = /^\$\{(\d+)\|((?:\\.|[^\\}])*)\|\}/;
 const BRACED_VARIABLE = /^\$\{([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?\}/;
 const BARE_VARIABLE = /^\$[A-Za-z_][A-Za-z0-9_]*/;
+/** The text up to the first unescaped `,` in a choice list. */
+const FIRST_CHOICE = /^(?:\\.|[^,])*/;
+/** The braced form of LSP's final tabstop: `${0}` or `${0:default}`. */
+const BRACED_FINAL_TABSTOP = /^\{0(?=[:}])/;
 
 /**
  * Resolves LSP choice tabstops (to their first choice) and variables (to their
@@ -260,11 +264,12 @@ function resolveSnippetChoicesAndVariables(
             const rest = snippet.slice(i);
             const choice = CHOICE_TABSTOP.exec(rest);
             if (choice) {
-                const firstChoice = (choice[2] ?? "").split(/(?<!\\),/, 1)[0];
-                result += renderChoice(
-                    choice[1] ?? "",
-                    (firstChoice ?? "").replaceAll("\\,", ","),
-                );
+                // Scan escape-aware from the left: a lookbehind on the comma
+                // misreads `\\,` (a literal backslash then a delimiter) as an
+                // escaped comma. Escapes are unwound by the caller's own pass.
+                const firstChoice =
+                    FIRST_CHOICE.exec(choice[2] ?? "")?.[0] ?? "";
+                result += renderChoice(choice[1] ?? "", firstChoice);
                 i += choice[0].length;
                 continue;
             }
@@ -344,8 +349,15 @@ export function convertSnippet(snippet: string): string {
                 i += 2;
             }
         } else if (ch === "$") {
-            const digits = /^\d+/.exec(normalizedSnippet.slice(i + 1));
-            if (digits) {
+            const rest = normalizedSnippet.slice(i + 1);
+            const bracedFinal = BRACED_FINAL_TABSTOP.exec(rest);
+            const digits = /^\d+/.exec(rest);
+            if (bracedFinal) {
+                // `${0}` / `${0:x}`: renumber the field and let the rest of
+                // the placeholder flow through, so defaults still expand.
+                result += `\${${finalTabstop}`;
+                i += 1 + bracedFinal[0].length;
+            } else if (digits) {
                 // CodeMirror visits fields numerically; LSP reserves $0 for last.
                 const field = digits[0] === "0" ? finalTabstop : digits[0];
                 result += `\${${field}}`;
