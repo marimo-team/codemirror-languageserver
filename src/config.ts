@@ -17,14 +17,49 @@ export function createUseFirstOrThrow(message: string) {
     };
 }
 
+const useDocumentUri = createUseFirstOrThrow(
+    "No document URI provided. Pass one to the extension or use documentUri.of().",
+);
+const useLanguageId = createUseFirstOrThrow(
+    "No language ID provided. Pass one to the extension or use languageId.of().",
+);
+
+function isAbsoluteUri(value: string): boolean {
+    // `new URL()` tolerates surrounding whitespace, but the URI is forwarded
+    // verbatim as `textDocument.uri`, so padded values must be rejected.
+    if (value !== value.trim()) {
+        return false;
+    }
+    try {
+        const uri = new URL(value);
+        return Boolean(uri.protocol);
+    } catch {
+        return false;
+    }
+}
+
 export const documentUri = Facet.define<string, string>({
-    combine: createUseFirstOrThrow(
-        "No document URI provided. Either pass a one into the extension or use documentUri.of().",
-    ),
+    combine(values) {
+        if (values.length === 0) {
+            return useDocumentUri<string>(values);
+        }
+        const value = useDocumentUri<string>(values);
+        if (!(value && isAbsoluteUri(value))) {
+            throw new Error("Document URI must be a non-empty absolute URI");
+        }
+        return value;
+    },
 });
 
 export const languageId = Facet.define<string, string>({
-    combine: createUseFirstOrThrow(
-        "No language ID provided. Either pass a one into the extension or use languageId.of().",
-    ),
+    combine(values) {
+        if (values.length === 0) {
+            return useLanguageId<string>(values);
+        }
+        const value = useLanguageId<string>(values);
+        if (!value.trim()) {
+            throw new Error("Language ID must be a non-empty string");
+        }
+        return value;
+    },
 });

@@ -59,7 +59,6 @@ import {
     isEmptyDocumentation,
     offsetToPos,
     posToOffset,
-    posToOffsetOrZero,
     prefixMatch,
     renderDocumentation,
     renderMarkdown,
@@ -67,6 +66,7 @@ import {
 } from "./utils.js";
 
 const logger = console.log;
+const MAX_LSP_INTEGER = 2 ** 31 - 1;
 
 // https://microsoft.github.io/language-server-protocol/specifications/specification-current/
 
@@ -79,9 +79,11 @@ function uniqueId() {
  * edit or be sent to `codeAction/resolve`.
  */
 function isBareCommand(
-    action: LSP.Command | LSP.CodeAction,
+    action: LSP.Command | LSP.CodeAction | null | undefined,
 ): action is LSP.Command {
-    return typeof (action as LSP.Command).command === "string";
+    return (
+        action != null && typeof (action as LSP.Command).command === "string"
+    );
 }
 
 function comparePosition(a: LSP.Position, b: LSP.Position): number {
@@ -360,8 +362,19 @@ export class LanguageServerPlugin implements PluginValue {
     private disposeListener?: () => void;
     private destroyed = false;
     private documentOpened = false;
+    // Set the moment `didOpen` snapshots the document text. Changes made
+    // before that point are already carried by the snapshot.
+    private documentTextSnapshotted = false;
+    // Whether this plugin's `didOpen` is what put the text on the server. It
+    // is not when another view already holds the document open, in which case
+    // nothing carries this plugin's text and no change may be dropped.
+    private documentOpenCarriedText = true;
+    private documentReady: Promise<void>;
+    private signatureHelpRequestId = 0;
     /** Dismisses the currently open code action menu, if any. */
     private closeCodeActionMenu?: () => void;
+    /** Dismisses the currently open rename popup, if any. */
+    private closeRenamePopup?: () => void;
 
     constructor(opts: {
         client: LanguageServerClient;
@@ -413,7 +426,7 @@ export class LanguageServerPlugin implements PluginValue {
             this.processNotification.bind(this),
         );
 
-        this.initialize().catch((error) => {
+        this.documentReady = this.initialize().catch((error) => {
             console.error("Language server initialization failed", error);
         });
     }
@@ -455,6 +468,15 @@ export class LanguageServerPlugin implements PluginValue {
         this.disposeListener?.();
         this.disposeListener = undefined;
         this.closeCodeActionMenu?.();
+        this.closeRenamePopup?.();
+        if (this.view.state.field(relatedLocationAnchors, false)) {
+            this.view.dispatch({
+                effects: setRelatedLocationAnchors.of({
+                    pluginId: this.pluginId,
+                    anchors: new Map(),
+                }),
+            });
+        }
         unregisterPlugin(this.view, this);
         this.closeDocument();
     }
@@ -487,16 +509,21 @@ export class LanguageServerPlugin implements PluginValue {
         if (this.destroyed) {
             return;
         }
-        await this.client.textDocumentDidOpen({
+        // Read the document at didOpen time so edits made while the
+        // server was still initializing are not lost
+        const text = documentText ?? this.view.state.doc.toString();
+        this.documentTextSnapshotted = true;
+        const sentDidOpen = await this.client.textDocumentDidOpen({
             textDocument: {
                 uri: this.documentUri,
                 languageId: this.languageId,
-                // Read the document at didOpen time so edits made while the
-                // server was still initializing are not lost
-                text: documentText ?? this.view.state.doc.toString(),
+                text,
                 version: this.documentVersion,
             },
         });
+        // A client that predates this signature reports `undefined`; treat
+        // anything but an explicit `false` as "the text was sent".
+        this.documentOpenCarriedText = sentDidOpen !== false;
         this.documentOpened = true;
         // If the view was torn down while didOpen was in flight, destroy() saw
         // documentOpened === false and could not close. Balance the open here
@@ -530,6 +557,17 @@ export class LanguageServerPlugin implements PluginValue {
     public async sendChanges(
         contentChanges: LSP.TextDocumentContentChangeEvent[],
     ) {
+        // Sampled before awaiting: `update()` calls this synchronously, so
+        // this reflects the document state the change was made against.
+        const changedAfterSnapshot = this.documentTextSnapshotted;
+        if (!this.documentOpened) {
+            await this.documentReady;
+            if (!changedAfterSnapshot && this.documentOpenCarriedText) {
+                // `didOpen` sent the document text as of a later moment, so
+                // resending this change would apply it to the server twice.
+                return;
+            }
+        }
         if (!this.client.ready) {
             return;
         }
@@ -651,10 +689,15 @@ export class LanguageServerPlugin implements PluginValue {
             return null;
         }
 
-        const result = await this.client.textDocumentHover({
-            textDocument: { uri: this.documentUri },
-            position: { line, character },
-        });
+        let result: LSP.Hover | null;
+        try {
+            result = await this.client.textDocumentHover({
+                textDocument: { uri: this.documentUri },
+                position: { line, character },
+            });
+        } catch {
+            return null;
+        }
         if (!result) {
             return null;
         }
@@ -713,14 +756,19 @@ export class LanguageServerPlugin implements PluginValue {
             return null;
         }
 
-        const result = await this.client.textDocumentCompletion({
-            textDocument: { uri: this.documentUri },
-            position: { line, character },
-            context: {
-                triggerKind,
-                triggerCharacter,
-            },
-        });
+        let result: LSP.CompletionItem[] | LSP.CompletionList | null;
+        try {
+            result = await this.client.textDocumentCompletion({
+                textDocument: { uri: this.documentUri },
+                position: { line, character },
+                context: {
+                    triggerKind,
+                    triggerCharacter,
+                },
+            });
+        } catch {
+            return null;
+        }
 
         if (!result) {
             return null;
@@ -729,6 +777,9 @@ export class LanguageServerPlugin implements PluginValue {
         const completionList: LSP.CompletionList = isCompletionList(result)
             ? result
             : { isIncomplete: false, items: result };
+        if (!Array.isArray(completionList.items)) {
+            return null;
+        }
 
         const items = completionList.items.map((item) =>
             resolveItemDefaults(item, completionList.itemDefaults),
@@ -808,22 +859,40 @@ export class LanguageServerPlugin implements PluginValue {
             return;
         }
 
-        const result = await this.client.textDocumentDefinition({
-            textDocument: { uri: this.documentUri },
-            position: { line, character },
-        });
+        let result: LSP.Definition | LSP.DefinitionLink[] | null;
+        try {
+            result = await this.client.textDocumentDefinition({
+                textDocument: { uri: this.documentUri },
+                position: { line, character },
+            });
+        } catch {
+            return;
+        }
 
-        if (!result) return;
+        if (!result || this.destroyed) return;
 
         const locations = Array.isArray(result) ? result : [result];
         if (locations.length === 0) return;
 
         // For now just handle the first location
         const location = locations[0];
-        if (!location) return;
-        const uri = "uri" in location ? location.uri : location.targetUri;
+        if (!location || typeof location !== "object") return;
+        const uri =
+            "uri" in location && typeof location.uri === "string"
+                ? location.uri
+                : "targetUri" in location &&
+                    typeof location.targetUri === "string"
+                  ? location.targetUri
+                  : undefined;
         const range =
-            "range" in location ? location.range : location.targetRange;
+            "range" in location
+                ? location.range
+                : "targetRange" in location
+                  ? location.targetRange
+                  : undefined;
+        if (!(uri && range?.start && range.end)) {
+            return;
+        }
 
         // Check if the definition is in a different document
         const isExternalDocument = uri !== this.documentUri;
@@ -837,11 +906,16 @@ export class LanguageServerPlugin implements PluginValue {
 
         // If it's the same document, update the selection
         if (!isExternalDocument) {
+            const anchor = posToOffset(view.state.doc, range.start);
+            const head = posToOffset(view.state.doc, range.end);
+            if (anchor == null || head == null || anchor > head) {
+                return;
+            }
             view.dispatch(
                 view.state.update({
                     selection: {
-                        anchor: posToOffsetOrZero(view.state.doc, range.start),
-                        head: posToOffset(view.state.doc, range.end),
+                        anchor,
+                        head,
                     },
                 }),
             );
@@ -858,26 +932,49 @@ export class LanguageServerPlugin implements PluginValue {
         try {
             switch (notification.method) {
                 case "textDocument/publishDiagnostics":
-                    this.processDiagnostics(notification.params);
+                    if (notification.params) {
+                        void this.processDiagnostics(notification.params).catch(
+                            (error) => logger(error),
+                        );
+                    }
             }
         } catch (error) {
             logger(error);
         }
     }
 
-    private lastSeenDiagnosticsVersion = 0;
+    private lastSeenDiagnosticsVersion: number | null = null;
 
     public async processDiagnostics(params: PublishDiagnosticsParams) {
-        if (params.uri !== this.documentUri) {
+        if (
+            !params ||
+            params.uri !== this.documentUri ||
+            !Array.isArray(params.diagnostics)
+        ) {
             return;
         }
 
         if (params.version != null) {
+            if (
+                typeof params.version !== "number" ||
+                !Number.isInteger(params.version) ||
+                params.version < 0 ||
+                params.version > MAX_LSP_INTEGER
+            ) {
+                return;
+            }
             // Ignore stale publishes delivered out of order
-            if (params.version < this.lastSeenDiagnosticsVersion) {
+            if (
+                this.lastSeenDiagnosticsVersion != null &&
+                params.version < this.lastSeenDiagnosticsVersion
+            ) {
                 return;
             }
             this.lastSeenDiagnosticsVersion = params.version;
+        } else if (this.lastSeenDiagnosticsVersion != null) {
+            // Once the server has started versioning diagnostics, an
+            // unversioned publish cannot safely supersede them.
+            return;
         }
 
         // Check if diagnostics are enabled
@@ -899,6 +996,27 @@ export class LanguageServerPlugin implements PluginValue {
         // Snapshot the document so ranges are resolved against the text the
         // server published for, even while code actions load below
         const doc = this.view.state.doc;
+        const validDiagnostics = params.diagnostics.filter(
+            (diagnostic): diagnostic is LSP.Diagnostic => {
+                if (
+                    !diagnostic ||
+                    typeof diagnostic !== "object" ||
+                    !diagnostic.range ||
+                    (typeof diagnostic.message !== "string" &&
+                        (typeof diagnostic.message !== "object" ||
+                            diagnostic.message === null ||
+                            typeof diagnostic.message.value !== "string"))
+                ) {
+                    return false;
+                }
+                const from = posToOffset(doc, diagnostic.range.start);
+                const to = posToOffset(doc, diagnostic.range.end);
+                return from != null && to != null && from <= to;
+            },
+        );
+        if (params.diagnostics.length > 0 && validDiagnostics.length === 0) {
+            return;
+        }
 
         // One codeAction request for the whole publish; results are
         // distributed to diagnostics by range overlap
@@ -906,7 +1024,7 @@ export class LanguageServerPlugin implements PluginValue {
         try {
             allActions =
                 (await this.requestCodeActionsForDiagnostics(
-                    params.diagnostics,
+                    validDiagnostics,
                 )) ?? [];
         } catch (error) {
             // Diagnostics are still worth showing without their quick fixes
@@ -923,6 +1041,7 @@ export class LanguageServerPlugin implements PluginValue {
         }
         if (
             params.version != null &&
+            this.lastSeenDiagnosticsVersion != null &&
             params.version < this.lastSeenDiagnosticsVersion
         ) {
             return;
@@ -935,7 +1054,7 @@ export class LanguageServerPlugin implements PluginValue {
         // relatedLocationAnchors so they are mapped through later edits
         const relatedAnchors = new Map<string, RelatedAnchor>();
 
-        const diagnostics = params.diagnostics.map(
+        const diagnostics = validDiagnostics.map(
             (lspDiagnostic, diagIndex): Diagnostic | null => {
                 const { range, message, severity, code, source, tags } =
                     lspDiagnostic;
@@ -1009,7 +1128,9 @@ export class LanguageServerPlugin implements PluginValue {
                 const diagnostic: DiagnosticWithLSP = {
                     from,
                     to,
-                    severity: severityMap[severity ?? DiagnosticSeverity.Error],
+                    severity:
+                        severityMap[severity ?? DiagnosticSeverity.Error] ??
+                        "error",
                     message: diagnosticMessageToString(message),
                     renderMessage: (view) =>
                         this.renderDiagnosticMessage(
@@ -1106,11 +1227,14 @@ export class LanguageServerPlugin implements PluginValue {
 
         const body = document.createElement("div");
         const messageText = diagnosticMessageToString(message);
-        if (this.allowHTMLContent) {
-            body.innerHTML = this.markdownRenderer(messageText);
-        } else {
-            body.textContent = messageText;
-        }
+        renderDocumentation(
+            body,
+            { kind: "markdown", value: messageText },
+            {
+                allowHTMLContent: this.allowHTMLContent,
+                markdownRenderer: this.markdownRenderer,
+            },
+        );
         dom.appendChild(body);
 
         // Link out to the rule/error documentation when the server provides a
@@ -1428,7 +1552,7 @@ export class LanguageServerPlugin implements PluginValue {
             return action;
         }
         try {
-            return await this.client.codeActionResolve(action);
+            return (await this.client.codeActionResolve(action)) ?? action;
         } catch (error) {
             console.error("Failed to resolve code action", error);
             return action;
@@ -1698,7 +1822,13 @@ export class LanguageServerPlugin implements PluginValue {
                 return;
             }
             const to = posToOffset(view.state.doc, range.end);
-            input.value = view.state.doc.sliceString(from, to);
+            input.value =
+                "placeholder" in renameRange
+                    ? renameRange.placeholder
+                    : to == null
+                      ? ""
+                      : view.state.doc.sliceString(from, to);
+            const initialName = input.value;
 
             popup.appendChild(input);
 
@@ -1710,26 +1840,49 @@ export class LanguageServerPlugin implements PluginValue {
             popup.style.top = `${coords.bottom + 5}px`;
 
             // Handle input
+            const handleOutsideClick = (e: MouseEvent) => {
+                if (!popup.contains(e.target as Node)) {
+                    closePopup();
+                }
+            };
+            const closePopup = () => {
+                popup.remove();
+                document.removeEventListener("mousedown", handleOutsideClick);
+                if (this.closeRenamePopup === closePopup) {
+                    this.closeRenamePopup = undefined;
+                }
+            };
+
             const handleRename = async () => {
                 const newName = input.value.trim();
                 if (!newName) {
                     showErrorMessage(view, "New name cannot be empty");
-                    popup.remove();
+                    closePopup();
                     return;
                 }
 
-                if (newName === input.defaultValue) {
-                    popup.remove();
+                if (/[\r\n]/.test(newName)) {
+                    showErrorMessage(view, "New name must be a single line");
+                    closePopup();
+                    return;
+                }
+
+                if (newName === initialName) {
+                    closePopup();
                     return;
                 }
 
                 try {
+                    const requestDoc = view.state.doc;
                     const edit = await this.client.textDocumentRename({
                         textDocument: { uri: this.documentUri },
                         position: { line, character },
                         newName,
                     });
 
+                    if (this.destroyed || view.state.doc !== requestDoc) {
+                        return;
+                    }
                     await this.applyRenameEdit(view, edit);
                 } catch (error) {
                     showErrorMessage(
@@ -1737,29 +1890,22 @@ export class LanguageServerPlugin implements PluginValue {
                         `Rename failed: ${error instanceof Error ? error.message : "Unknown error"}`,
                     );
                 } finally {
-                    popup.remove();
+                    closePopup();
                 }
             };
 
             input.addEventListener("keydown", (e) => {
                 if (e.key === "Enter") {
-                    handleRename();
+                    void handleRename();
                 } else if (e.key === "Escape") {
-                    popup.remove();
+                    closePopup();
                 }
                 e.stopPropagation(); // Prevent editor handling
             });
 
             // Handle clicks outside
-            const handleOutsideClick = (e: MouseEvent) => {
-                if (!popup.contains(e.target as Node)) {
-                    popup.remove();
-                    document.removeEventListener(
-                        "mousedown",
-                        handleOutsideClick,
-                    );
-                }
-            };
+            this.closeRenamePopup?.();
+            this.closeRenamePopup = closePopup;
             document.addEventListener("mousedown", handleOutsideClick);
 
             // Add to DOM
@@ -1887,13 +2033,14 @@ export class LanguageServerPlugin implements PluginValue {
         pos: number,
         triggerCharacter?: string,
     ) {
+        const requestId = ++this.signatureHelpRequestId;
         const tooltip = await this.requestSignatureHelp(
             view,
             offsetToPos(view.state.doc, pos),
             triggerCharacter,
         );
 
-        if (this.destroyed) {
+        if (this.destroyed || requestId !== this.signatureHelpRequestId) {
             return;
         }
 
@@ -1996,13 +2143,29 @@ export class LanguageServerPlugin implements PluginValue {
         startIndex: number,
         endIndex: number,
     ): void {
+        if (
+            !(Number.isInteger(startIndex) && Number.isInteger(endIndex)) ||
+            startIndex < 0 ||
+            endIndex < 0 ||
+            startIndex > text.length ||
+            endIndex > text.length
+        ) {
+            element.textContent = text;
+            return;
+        }
+        const start = Math.min(startIndex, endIndex);
+        const end = Math.max(startIndex, endIndex);
+        if (start === end) {
+            element.textContent = text;
+            return;
+        }
         // Clear any existing content
         element.textContent = "";
 
         // Split the text into three parts: before, parameter, after
-        const beforeParam = text.substring(0, startIndex);
-        const param = text.substring(startIndex, endIndex);
-        const afterParam = text.substring(endIndex);
+        const beforeParam = text.substring(0, start);
+        const param = text.substring(start, end);
+        const afterParam = text.substring(end);
 
         // Add the parts to the element
         element.appendChild(document.createTextNode(beforeParam));
@@ -2069,7 +2232,7 @@ export class LanguageServerPlugin implements PluginValue {
         let start = character;
         let end = character;
         // Find all word matches in the line
-        // biome-ignore lint/suspicious/noAssignInExpressions: <explanation>
+        // biome-ignore lint/suspicious/noAssignInExpressions: iterate RegExp matches
         while ((match = wordRegex.exec(lineText)) !== null) {
             const matchStart = match.index;
             const matchEnd = match.index + match[0].length;
@@ -2111,15 +2274,42 @@ export class LanguageServerPlugin implements PluginValue {
         const doc = view.state.doc;
         const changes: { from: number; to: number; insert: string }[] = [];
         for (const edit of edits) {
+            if (
+                !edit ||
+                typeof edit !== "object" ||
+                !edit.range ||
+                typeof edit.newText !== "string"
+            ) {
+                return false;
+            }
             const from = posToOffset(doc, edit.range.start);
             const to = posToOffset(doc, edit.range.end);
             if (from == null || to == null || from > to) {
-                continue;
+                return false;
             }
             changes.push({ from, to, insert: edit.newText });
         }
         if (changes.length === 0) {
             return false;
+        }
+        const ordered = [...changes].sort(
+            (a, b) => a.from - b.from || a.to - b.to,
+        );
+        for (let index = 1; index < ordered.length; index++) {
+            const previous = ordered[index - 1];
+            const current = ordered[index];
+            if (!(previous && current)) {
+                continue;
+            }
+            if (
+                current.from < previous.to ||
+                (current.from === current.to &&
+                    previous.from === previous.to &&
+                    current.from === previous.from)
+            ) {
+                showErrorMessage(view, "Workspace edit ranges overlap");
+                return false;
+            }
         }
         view.dispatch(view.state.update({ changes }));
         return true;
@@ -2142,8 +2332,13 @@ export class LanguageServerPlugin implements PluginValue {
             return false;
         }
 
-        const changesMap = edit.changes ?? {};
-        const documentChanges = edit.documentChanges ?? [];
+        const changesMap =
+            edit.changes && typeof edit.changes === "object"
+                ? edit.changes
+                : {};
+        const documentChanges = Array.isArray(edit.documentChanges)
+            ? edit.documentChanges
+            : [];
 
         if (
             Object.keys(changesMap).length === 0 &&
@@ -2155,35 +2350,60 @@ export class LanguageServerPlugin implements PluginValue {
 
         // Handle documentChanges (preferred) if available
         if (documentChanges.length > 0) {
-            // Collect every edit for this document so multi-entry edits apply
-            // in one transaction; unsupported entries are skipped with a
-            // message instead of dropping the whole edit
             const edits: LSP.TextEdit[] = [];
-            let skipped: string | null = null;
             for (const docChange of documentChanges) {
-                if ("textDocument" in docChange) {
-                    if (docChange.textDocument.uri === this.documentUri) {
-                        // Snippet edits (LSP 3.18) carry a `snippet` instead
-                        // of `newText`; we can't apply them, so skip them and
-                        // keep the plain/annotated text edits.
-                        for (const docEdit of docChange.edits) {
-                            if ("newText" in docEdit) {
-                                edits.push(docEdit);
-                            } else {
-                                skipped = "Snippet edits not supported yet";
-                            }
-                        }
-                    } else {
-                        skipped = "Multi-file edits not supported yet";
-                    }
-                } else {
-                    // CreateFile, RenameFile, or DeleteFile operation
-                    skipped =
-                        "File creation, deletion, or renaming operations not supported yet";
+                if (
+                    typeof docChange !== "object" ||
+                    docChange === null ||
+                    !("textDocument" in docChange)
+                ) {
+                    showErrorMessage(
+                        view,
+                        "File creation, deletion, or renaming operations not supported yet",
+                    );
+                    return false;
                 }
-            }
-            if (skipped) {
-                showErrorMessage(view, skipped);
+                if (
+                    typeof docChange.textDocument !== "object" ||
+                    docChange.textDocument === null
+                ) {
+                    showErrorMessage(view, "Malformed workspace edit");
+                    return false;
+                }
+                if (docChange.textDocument.uri !== this.documentUri) {
+                    showErrorMessage(
+                        view,
+                        "Multi-file edits not supported yet",
+                    );
+                    return false;
+                }
+                if (
+                    docChange.textDocument.version != null &&
+                    docChange.textDocument.version !== this.documentVersion
+                ) {
+                    showErrorMessage(
+                        view,
+                        "Workspace edit is stale because the document changed",
+                    );
+                    return false;
+                }
+                if (!Array.isArray(docChange.edits)) {
+                    return false;
+                }
+                for (const docEdit of docChange.edits) {
+                    if (
+                        typeof docEdit !== "object" ||
+                        docEdit === null ||
+                        !("newText" in docEdit)
+                    ) {
+                        showErrorMessage(
+                            view,
+                            "Snippet edits not supported yet",
+                        );
+                        return false;
+                    }
+                    edits.push(docEdit);
+                }
             }
             if (edits.length === 0) {
                 return false;
@@ -2192,15 +2412,16 @@ export class LanguageServerPlugin implements PluginValue {
         }
 
         // Fall back to changes if documentChanges is not available
-        let applied = false;
-        for (const [uri, changes] of Object.entries(changesMap)) {
-            if (uri !== this.documentUri) {
-                showErrorMessage(view, "Multi-file edits not supported yet");
-                continue;
-            }
-            applied = this.applyEdits(view, changes) || applied;
+        const entries = Object.entries(changesMap);
+        if (entries.some(([uri]) => uri !== this.documentUri)) {
+            showErrorMessage(view, "Multi-file edits not supported yet");
+            return false;
         }
-        return applied;
+        const edits = entries[0]?.[1];
+        if (!Array.isArray(edits)) {
+            return false;
+        }
+        return this.applyEdits(view, edits);
     }
 
     /** @deprecated Use {@link applyWorkspaceEdit}. */

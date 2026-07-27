@@ -3,85 +3,18 @@ import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type * as LSP from "vscode-languageserver-protocol";
-import { LanguageServerClient } from "../lsp.js";
-import type { FeatureOptions } from "../lsp.js";
 import {
     LanguageServerPlugin,
     getLanguageServerPlugin,
     relatedLocationAnchors,
 } from "../plugin.js";
-
-const featureOptions: Required<FeatureOptions> = {
-    diagnosticsEnabled: true,
-    hoverEnabled: true,
-    completionEnabled: true,
-    definitionEnabled: true,
-    renameEnabled: true,
-    codeActionsEnabled: false,
-    signatureHelpEnabled: true,
-    signatureActivateOnTyping: false,
-    signatureHelpOptions: { position: "below" },
-};
-
-interface FakeClientOverrides {
-    ready?: boolean;
-    capabilities?: LSP.ServerCapabilities;
-    initializePromise?: Promise<void>;
-}
-
-function createFakeClient(overrides: FakeClientOverrides = {}) {
-    return {
-        ready: overrides.ready ?? true,
-        capabilities: overrides.capabilities ?? {
-            hoverProvider: true,
-            renameProvider: true,
-        },
-        dynamicCapabilities: new Map(),
-        hasCapability: LanguageServerClient.prototype.hasCapability,
-        initializePromise: overrides.initializePromise ?? Promise.resolve(),
-        onNotification: vi.fn().mockReturnValue(() => {}),
-        textDocumentDidOpen: vi.fn().mockResolvedValue(undefined),
-        textDocumentDidChange: vi.fn().mockResolvedValue(undefined),
-        textDocumentDidClose: vi.fn().mockResolvedValue(undefined),
-        textDocumentWillSave: vi.fn().mockResolvedValue(undefined),
-        textDocumentWillSaveWaitUntil: vi.fn().mockResolvedValue(null),
-        textDocumentDidSave: vi.fn().mockResolvedValue(undefined),
-        textDocumentCodeAction: vi.fn().mockResolvedValue(null),
-        textDocumentPrepareRename: vi.fn(),
-        textDocumentRename: vi.fn(),
-        // biome-ignore lint/suspicious/noExplicitAny: partial stub of the client
-    } as any as LanguageServerClient;
-}
-
-function createView(doc: string): EditorView {
-    return new EditorView({
-        state: EditorState.create({ doc }),
-        parent: document.createElement("div"),
-    });
-}
-
-function createPlugin(
-    view: EditorView,
-    client = createFakeClient(),
-    options: Partial<
-        ConstructorParameters<typeof LanguageServerPlugin>[0]
-    > = {},
-) {
-    return new LanguageServerPlugin({
-        client,
-        documentUri: "file:///test.ts",
-        languageId: "typescript",
-        view,
-        featureOptions,
-        ...options,
-    });
-}
-
-async function flushTicks(count = 5) {
-    for (let i = 0; i < count; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 0));
-    }
-}
+import {
+    createFakeClient,
+    createPlugin,
+    createView,
+    featureOptions,
+    flushTicks,
+} from "./test-utils.js";
 
 function countDiagnostics(view: EditorView): { from: number; to: number }[] {
     const found: { from: number; to: number }[] = [];
@@ -872,7 +805,7 @@ describe("document change synchronization", () => {
         } as any;
     }
 
-    it("sends full text when the server only supports full sync", () => {
+    it("sends full text when the server only supports full sync", async () => {
         const client = createFakeClient({
             capabilities: { textDocumentSync: 1 },
         });
@@ -881,7 +814,10 @@ describe("document change synchronization", () => {
             sendIncrementalChanges: true,
         });
 
+        // Let didOpen settle first: a change racing it is carried by didOpen
+        await flushTicks();
         plugin.update(fakeUpdate(view, "hello", "!"));
+        await flushTicks();
 
         expect(client.textDocumentDidChange).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -890,7 +826,7 @@ describe("document change synchronization", () => {
         );
     });
 
-    it("sends incremental changes when the server supports them", () => {
+    it("sends incremental changes when the server supports them", async () => {
         const client = createFakeClient({
             capabilities: { textDocumentSync: 2 },
         });
@@ -899,7 +835,10 @@ describe("document change synchronization", () => {
             sendIncrementalChanges: true,
         });
 
+        // Let didOpen settle first: a change racing it is carried by didOpen
+        await flushTicks();
         plugin.update(fakeUpdate(view, "hello", "!"));
+        await flushTicks();
 
         expect(client.textDocumentDidChange).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -946,7 +885,7 @@ describe("document change synchronization", () => {
         expect(client.textDocumentDidChange).not.toHaveBeenCalled();
     });
 
-    it("honors the change kind from TextDocumentSyncOptions", () => {
+    it("honors the change kind from TextDocumentSyncOptions", async () => {
         const client = createFakeClient({
             capabilities: { textDocumentSync: { openClose: true, change: 2 } },
         });
@@ -955,7 +894,10 @@ describe("document change synchronization", () => {
             sendIncrementalChanges: true,
         });
 
+        // Let didOpen settle first: a change racing it is carried by didOpen
+        await flushTicks();
         plugin.update(fakeUpdate(view, "hello", "!"));
+        await flushTicks();
 
         expect(client.textDocumentDidChange).toHaveBeenCalledWith(
             expect.objectContaining({

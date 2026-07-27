@@ -51,6 +51,12 @@ describe("completion request ordering", () => {
             }),
         });
 
+        // Let didOpen settle; a change racing it is carried by didOpen itself
+        await vi.waitFor(() => {
+            expect(client.textDocumentDidOpen).toHaveBeenCalled();
+        });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
         view.dispatch({
             changes: { from: initialText.length, insert: " " },
             selection: { anchor: text.length },

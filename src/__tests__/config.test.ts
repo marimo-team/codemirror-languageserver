@@ -62,10 +62,21 @@ describe("documentUri facet", () => {
         expect(typeof documentUri.combine).toBe("function");
     });
 
+    it("should reject a URI padded with whitespace", () => {
+        // `new URL()` tolerates the padding, but the raw string is what gets
+        // sent as `textDocument.uri`
+        expect(() => documentUri.combine([" file:///test.ts"])).toThrow(
+            "Document URI must be a non-empty absolute URI",
+        );
+        expect(() => documentUri.combine(["file:///test.ts\n"])).toThrow(
+            "Document URI must be a non-empty absolute URI",
+        );
+    });
+
     it("should throw error when no values provided and accessed", () => {
         const result = documentUri.combine([]);
         expect(() => result.anyProperty).toThrow(
-            "No document URI provided. Either pass a one into the extension or use documentUri.of().",
+            "No document URI provided. Pass one to the extension or use documentUri.of().",
         );
     });
 
@@ -101,7 +112,7 @@ describe("languageId facet", () => {
     it("should throw error when no values provided and accessed", () => {
         const result = languageId.combine([]);
         expect(() => result.anyProperty).toThrow(
-            "No language ID provided. Either pass a one into the extension or use languageId.of().",
+            "No language ID provided. Pass one to the extension or use languageId.of().",
         );
     });
 

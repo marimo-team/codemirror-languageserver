@@ -1,24 +1,20 @@
 import { setDiagnostics } from "@codemirror/lint";
-import { EditorState } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
+import type { EditorView } from "@codemirror/view";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type * as LSP from "vscode-languageserver-protocol";
-import { LanguageServerClient } from "../lsp.js";
-import type { FeatureOptions } from "../lsp.js";
-import { LanguageServerPlugin } from "../plugin.js";
+import {
+    featureOptions as baseFeatureOptions,
+    createFakeClient as createBaseFakeClient,
+    createPlugin as createBasePlugin,
+    createView,
+    flushTicks,
+} from "./test-utils.js";
 
 const DOCUMENT_URI = "file:///test.ts";
 
-const featureOptions: Required<FeatureOptions> = {
-    diagnosticsEnabled: true,
-    hoverEnabled: true,
-    completionEnabled: true,
-    definitionEnabled: true,
-    renameEnabled: true,
+const featureOptions = {
+    ...baseFeatureOptions,
     codeActionsEnabled: true,
-    signatureHelpEnabled: true,
-    signatureActivateOnTyping: false,
-    signatureHelpOptions: { position: "below" },
 };
 
 interface FakeClientOverrides {
@@ -27,46 +23,23 @@ interface FakeClientOverrides {
 }
 
 function createFakeClient(overrides: FakeClientOverrides = {}) {
-    return {
-        ready: true,
+    const client = createBaseFakeClient({
         capabilities: overrides.capabilities ?? {
             codeActionProvider: { resolveProvider: true },
         },
-        dynamicCapabilities: new Map(),
-        hasCapability: LanguageServerClient.prototype.hasCapability,
-        initializePromise: Promise.resolve(),
-        onNotification: vi.fn().mockReturnValue(() => {}),
-        textDocumentDidOpen: vi.fn().mockResolvedValue(undefined),
-        textDocumentDidChange: vi.fn().mockResolvedValue(undefined),
-        textDocumentDidClose: vi.fn().mockResolvedValue(undefined),
-        textDocumentCodeAction: vi
-            .fn()
-            .mockResolvedValue(overrides.codeActions ?? null),
-        codeActionResolve: vi.fn(),
-        // biome-ignore lint/suspicious/noExplicitAny: partial stub of the client
-    } as any as LanguageServerClient;
-}
-
-function createView(doc: string): EditorView {
-    const view = new EditorView({
-        state: EditorState.create({ doc }),
-        parent: document.createElement("div"),
     });
-    return view;
+    client.textDocumentCodeAction = vi
+        .fn()
+        .mockResolvedValue(overrides.codeActions ?? null);
+    return client;
 }
 
 function createPlugin(
     view: EditorView,
     client = createFakeClient(),
-    options: Partial<
-        ConstructorParameters<typeof LanguageServerPlugin>[0]
-    > = {},
+    options: NonNullable<Parameters<typeof createBasePlugin>[2]> = {},
 ) {
-    return new LanguageServerPlugin({
-        client,
-        documentUri: DOCUMENT_URI,
-        languageId: "typescript",
-        view,
+    return createBasePlugin(view, client, {
         featureOptions: { ...featureOptions },
         ...options,
     });
@@ -85,12 +58,6 @@ const range = (
     start: { line: startLine, character: startChar },
     end: { line: endLine, character: endChar },
 });
-
-async function flushTicks(count = 5) {
-    for (let i = 0; i < count; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 0));
-    }
-}
 
 afterEach(() => {
     document.body.innerHTML = "";
@@ -186,7 +153,7 @@ describe("applyCodeAction / codeAction/resolve", () => {
             edit: {
                 documentChanges: [
                     {
-                        textDocument: { uri: DOCUMENT_URI, version: 1 },
+                        textDocument: { uri: DOCUMENT_URI, version: 0 },
                         edits: [
                             { range: range(0, 6, 0, 11), newText: "there" },
                         ],
@@ -208,11 +175,11 @@ describe("applyCodeAction / codeAction/resolve", () => {
             edit: {
                 documentChanges: [
                     {
-                        textDocument: { uri: DOCUMENT_URI, version: 1 },
+                        textDocument: { uri: DOCUMENT_URI, version: 0 },
                         edits: [{ range: range(0, 0, 0, 5), newText: "howdy" }],
                     },
                     {
-                        textDocument: { uri: DOCUMENT_URI, version: 1 },
+                        textDocument: { uri: DOCUMENT_URI, version: 0 },
                         edits: [
                             { range: range(0, 6, 0, 11), newText: "there" },
                         ],
