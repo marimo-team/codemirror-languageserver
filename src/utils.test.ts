@@ -274,8 +274,8 @@ describe("posToOffset", () => {
 
     it("should return undefined for invalid line beyond document end", () => {
         const doc = Text.of(["hello"]);
-        expect(posToOffset(doc, { line: 1, character: 1 })).toBeUndefined(); // Character > 0 on line beyond document
-        expect(posToOffset(doc, { line: 2, character: 0 })).toBe(5); // Line far beyond document but character 0 returns doc.length
+        expect(posToOffset(doc, { line: 1, character: 1 })).toBeUndefined();
+        expect(posToOffset(doc, { line: 2, character: 0 })).toBeUndefined();
     });
 
     it("should clamp character beyond line length to the end of the line", () => {

@@ -10,6 +10,8 @@ import {
 } from "./jsonrpc.js";
 
 const TIMEOUT = 10000;
+const MAX_LOGGED_SERVER_MESSAGE_LENGTH = 2048;
+const SERVER_MESSAGE_PREFIX = "Language server: ";
 
 // Client to server then server to client
 export interface LSPRequestMap {
@@ -338,6 +340,9 @@ export class LanguageServerClient {
         timeout = TIMEOUT,
         getWorkspaceConfiguration,
     }: LanguageServerClientOptions) {
+        if (!rootUri) {
+            throw new Error("rootUri must be a non-empty URI");
+        }
         this.rootUri = rootUri;
         this.workspaceFolders = workspaceFolders;
         this.initializationOptions = initializationOptions;
@@ -367,7 +372,20 @@ export class LanguageServerClient {
         this.onRequest(
             "client/registerCapability",
             (params: LSP.RegistrationParams) => {
-                for (const registration of params?.registrations ?? []) {
+                const registrations = params?.registrations;
+                if (!Array.isArray(registrations)) {
+                    return null;
+                }
+                for (const registration of registrations) {
+                    if (
+                        !registration ||
+                        typeof registration.id !== "string" ||
+                        registration.id.length === 0 ||
+                        typeof registration.method !== "string" ||
+                        this.dynamicCapabilities.has(registration.id)
+                    ) {
+                        continue;
+                    }
                     this.dynamicCapabilities.set(registration.id, registration);
                 }
                 return null;
@@ -377,7 +395,11 @@ export class LanguageServerClient {
             "client/unregisterCapability",
             (params: LSP.UnregistrationParams) => {
                 // "unregisterations" is a spelling mistake baked into the LSP spec
-                for (const unregistration of params?.unregisterations ?? []) {
+                const unregisterations = params?.unregisterations;
+                if (!Array.isArray(unregisterations)) {
+                    return null;
+                }
+                for (const unregistration of unregisterations) {
                     this.dynamicCapabilities.delete(unregistration.id);
                 }
                 return null;
@@ -400,7 +422,18 @@ export class LanguageServerClient {
                 // No UI for message requests; surface the message in the
                 // console and answer null ("no action selected")
                 if (params?.message) {
-                    console.info(`Language server: ${params.message}`);
+                    const message = String(params.message)
+                        .replace(
+                            // biome-ignore lint/suspicious/noControlCharactersInRegex: sanitizing server-controlled log text
+                            /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g,
+                            "",
+                        )
+                        .slice(
+                            0,
+                            MAX_LOGGED_SERVER_MESSAGE_LENGTH -
+                                SERVER_MESSAGE_PREFIX.length,
+                        );
+                    console.info(`${SERVER_MESSAGE_PREFIX}${message}`);
                 }
                 return null;
             },
@@ -553,27 +586,52 @@ export class LanguageServerClient {
     }
 
     public async initialize() {
-        const { capabilities } = await this.request(
+        const result = await this.request(
             "initialize",
             this.getInitializationOptions(),
             this.timeout * 3,
         );
+        if (
+            !result ||
+            typeof result !== "object" ||
+            !("capabilities" in result) ||
+            typeof result.capabilities !== "object" ||
+            result.capabilities === null
+        ) {
+            throw new Error(
+                "Invalid initialize response: missing server capabilities",
+            );
+        }
         // The client may have been closed while initialize was in flight;
         // don't send `initialized` on a dead transport or revive `ready`
         if (this.isClosed) {
             return;
         }
-        this.capabilities = capabilities;
+        this.capabilities = result.capabilities;
         this.notify("initialized", {});
         this.ready = true;
     }
 
     public close() {
+        if (this.isClosed) {
+            return;
+        }
         this.isClosed = true;
         this.ready = false;
         this.notificationListeners.clear();
         this.serverRequestHandlers.clear();
         this.dynamicCapabilities.clear();
+        this.documentOpenCounts.clear();
+        if (this.capabilities) {
+            const shutdown = this.client.request(
+                "shutdown",
+                null,
+                this.timeout,
+            );
+            shutdown.catch(() => {});
+            const exit = this.client.notify("exit", undefined);
+            exit.catch(() => {});
+        }
         this.client.close();
     }
 
@@ -782,9 +840,32 @@ export class LanguageServerClient {
         params: LSPRequestMap[K][0],
         timeout: number,
     ): Promise<LSPRequestMap[K][1]> {
-        return this.client.request(method, params, timeout) as Promise<
-            LSPRequestMap[K][1]
-        >;
+        if (method === "initialize") {
+            return this.client.request(method, params, timeout) as Promise<
+                LSPRequestMap[K][1]
+            >;
+        }
+        const requestedDuringInitialization = !(
+            this.ready || this.capabilities
+        );
+        const capabilityWasAvailable = this.hasCapability(method);
+        return this.initializePromise.then(() => {
+            if (this.isClosed) {
+                throw new Error("Language server client is closed");
+            }
+            if (
+                !requestedDuringInitialization &&
+                METHOD_TO_STATIC_CAPABILITY[method] &&
+                !(capabilityWasAvailable || this.hasCapability(method))
+            ) {
+                throw new Error(
+                    `Language server does not support method ${method}`,
+                );
+            }
+            return this.client.request(method, params, timeout) as Promise<
+                LSPRequestMap[K][1]
+            >;
+        });
     }
 
     protected notify<K extends keyof LSPNotifyMap>(
@@ -797,7 +878,9 @@ export class LanguageServerClient {
     protected processNotification(notification: Notification) {
         for (const l of this.notificationListeners) {
             try {
-                l(notification);
+                Promise.resolve(l(notification)).catch((error) => {
+                    console.error("Notification listener failed", error);
+                });
             } catch (error) {
                 // One faulty listener must not starve the others
                 console.error("Notification listener failed", error);

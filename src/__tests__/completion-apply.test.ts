@@ -1,22 +1,10 @@
-import { EditorState } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
 import { describe, expect, it, vi } from "vitest";
 import type * as LSP from "vscode-languageserver-protocol";
 import { convertCompletionItem, sortCompletionItems } from "../completion.js";
-
-function createView(doc: string): EditorView {
-    return new EditorView({
-        state: EditorState.create({ doc }),
-        parent: document.createElement("div"),
-    });
-}
-
-const defaultOptions = {
-    allowHTMLContent: false,
-    useSnippetOnCompletion: false,
-    hasResolveProvider: false,
-    resolveItem: vi.fn(),
-};
+import {
+    createCompletionView as createView,
+    defaultCompletionOptions as defaultOptions,
+} from "./completion-test-utils.js";
 
 describe("convertCompletionItem type mapping", () => {
     it("does not crash on non-standard completion item kinds", () => {

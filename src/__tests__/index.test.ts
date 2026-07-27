@@ -89,10 +89,7 @@ describe("LanguageServer", () => {
             expect(posToOffset(doc, { line: 0, character: 5 })).toBe(5);
             expect(posToOffset(doc, { line: 1, character: 0 })).toBe(11);
 
-            // Edge-case, if the line is out of bounds,
-            expect(posToOffset(doc, { line: 5, character: 0 })).toBe(
-                doc.length,
-            );
+            expect(posToOffset(doc, { line: 5, character: 0 })).toBeUndefined();
 
             // Character overflow clamps to the end of the line (LSP spec)
             expect(posToOffset(doc, { line: 0, character: 50 })).toBe(10);
@@ -118,7 +115,9 @@ describe("LanguageServer", () => {
             // Drive the internal JSON-RPC client directly; the transport
             // handshake is exercised separately.
             // biome-ignore lint/suspicious/noExplicitAny: test override
-            (client as any).client.request = vi.fn().mockResolvedValue({});
+            (client as any).client.request = vi
+                .fn()
+                .mockResolvedValue({ capabilities: {} });
             // biome-ignore lint/suspicious/noExplicitAny: test override
             (client as any).client.notify = vi
                 .fn()
@@ -137,7 +136,7 @@ describe("LanguageServer", () => {
                 },
             };
 
-            // biome-ignore lint/suspicious/noExplicitAny: <explanation>
+            // biome-ignore lint/suspicious/noExplicitAny: stub the private JSON-RPC client
             (client as any).client.request.mockResolvedValueOnce(initResult);
 
             await client.initialize();
@@ -163,13 +162,13 @@ describe("LanguageServer", () => {
                 },
             };
 
-            // biome-ignore lint/suspicious/noExplicitAny: <explanation>
+            // biome-ignore lint/suspicious/noExplicitAny: stub the private JSON-RPC client
             (client as any).client.request.mockResolvedValueOnce(resolvedItem);
 
             const result =
                 await client.completionItemResolve(mockCompletionItem);
 
-            // biome-ignore lint/suspicious/noExplicitAny: <explanation>
+            // biome-ignore lint/suspicious/noExplicitAny: inspect the private JSON-RPC client
             expect((client as any).client.request).toHaveBeenCalledWith(
                 "completionItem/resolve",
                 mockCompletionItem,
@@ -191,7 +190,7 @@ describe("LanguageServer", () => {
 
             await client.textDocumentDidChange(params);
 
-            // biome-ignore lint/suspicious/noExplicitAny: <explanation>
+            // biome-ignore lint/suspicious/noExplicitAny: inspect the private JSON-RPC client
             expect((client as any).client.notify).toHaveBeenCalledWith(
                 "textDocument/didChange",
                 params,
@@ -418,6 +417,7 @@ console.log(a)`;
                 { from: 16, to: 24 },
             ],
         });
+        await new Promise((resolve) => setTimeout(resolve, 0));
 
         // Make sure we sent the correct changes based on the changeset
         expect(mockClient.textDocumentDidChange).toHaveBeenCalledWith({

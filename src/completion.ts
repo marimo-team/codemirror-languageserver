@@ -79,7 +79,8 @@ export function resolveItemDefaults(
         resolved.data = defaults.data;
     }
     if (resolved.textEdit == null && defaults.editRange) {
-        const newText = resolved.textEditText ?? resolved.label;
+        const newText =
+            resolved.textEditText ?? resolved.insertText ?? resolved.label;
         resolved.textEdit = isInsertReplaceRange(defaults.editRange)
             ? {
                   newText,
@@ -230,6 +231,8 @@ namespace InsertTextFormat {
     export const Snippet = 2;
 }
 
+const FINAL_SNIPPET_TABSTOP = "999999";
+
 /**
  * Converts an LSP snippet to a CodeMirror snippet.
  *
@@ -240,16 +243,30 @@ namespace InsertTextFormat {
  * text would turn into an active placeholder.
  */
 export function convertSnippet(snippet: string): string {
+    const normalizedSnippet = snippet
+        .replace(
+            /\$\{(\d+)\|((?:\\.|[^}])*)\|\}/g,
+            (_match, tabstop: string, choices: string) => {
+                const firstChoice = choices.split(/(?<!\\),/, 1)[0] ?? "";
+                return `\${${tabstop}:${firstChoice.replaceAll("\\,", ",")}}`;
+            },
+        )
+        .replace(
+            /\$\{([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?\}/g,
+            (_match, _name: string, fallback: string | undefined) =>
+                fallback ?? "",
+        )
+        .replace(/\$[A-Za-z_][A-Za-z0-9_]*/g, "");
     let result = "";
     let i = 0;
-    while (i < snippet.length) {
-        const ch = snippet[i];
-        if (ch === "\\" && i + 1 < snippet.length) {
-            const next = snippet[i + 1];
+    while (i < normalizedSnippet.length) {
+        const ch = normalizedSnippet[i];
+        if (ch === "\\" && i + 1 < normalizedSnippet.length) {
+            const next = normalizedSnippet[i + 1];
             if (next === "$") {
                 // Literal `$`. Escape a following `{` so CodeMirror does not
                 // read the sequence as a field.
-                if (snippet[i + 2] === "{") {
+                if (normalizedSnippet[i + 2] === "{") {
                     result += "$\\{";
                     i += 3;
                 } else {
@@ -270,14 +287,20 @@ export function convertSnippet(snippet: string): string {
                 i += 2;
             }
         } else if (ch === "$") {
-            const digits = /^\d+/.exec(snippet.slice(i + 1));
+            const digits = /^\d+/.exec(normalizedSnippet.slice(i + 1));
             if (digits) {
-                result += `\${${digits[0]}}`;
+                // CodeMirror visits fields numerically; LSP reserves $0 for last.
+                const field =
+                    digits[0] === "0" ? FINAL_SNIPPET_TABSTOP : digits[0];
+                result += `\${${field}}`;
                 i += 1 + digits[0].length;
             } else {
                 result += ch;
                 i += 1;
             }
+        } else if (ch === "#" && normalizedSnippet[i + 1] === "{") {
+            result += "#\\{";
+            i += 2;
         } else {
             result += ch;
             i += 1;
@@ -293,22 +316,36 @@ export function convertSnippet(snippet: string): string {
  * sequences like `\${1:x}` render as their literal text.
  */
 function convertSnippetToPlainText(snippet: string): string {
+    const normalizedSnippet = snippet
+        .replace(
+            /\$\{(\d+)\|((?:\\.|[^}])*)\|\}/g,
+            (_match, _tabstop: string, choices: string) =>
+                (choices.split(/(?<!\\),/, 1)[0] ?? "").replaceAll("\\,", ","),
+        )
+        .replace(
+            /\$\{([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?\}/g,
+            (_match, _name: string, fallback: string | undefined) =>
+                fallback ?? "",
+        )
+        .replace(/\$[A-Za-z_][A-Za-z0-9_]*/g, "");
     let result = "";
     let i = 0;
-    while (i < snippet.length) {
-        const ch = snippet[i];
-        if (ch === "\\" && i + 1 < snippet.length) {
+    while (i < normalizedSnippet.length) {
+        const ch = normalizedSnippet[i];
+        if (ch === "\\" && i + 1 < normalizedSnippet.length) {
             // LSP escape -> the literal character
-            result += snippet[i + 1];
+            result += normalizedSnippet[i + 1];
             i += 2;
         } else if (ch === "$") {
-            const braced = /^\{(\d+)(?::([^}]*))?\}/.exec(snippet.slice(i + 1));
+            const braced = /^\{(\d+)(?::([^}]*))?\}/.exec(
+                normalizedSnippet.slice(i + 1),
+            );
             if (braced) {
                 // `${n:default}` -> default, `${n}` -> ""
                 result += braced[2] ?? "";
                 i += 1 + braced[0].length;
             } else {
-                const bare = /^\d+/.exec(snippet.slice(i + 1));
+                const bare = /^\d+/.exec(normalizedSnippet.slice(i + 1));
                 if (bare) {
                     // Bare tabstop `$n` -> ""
                     i += 1 + bare[0].length;
@@ -335,7 +372,7 @@ export function convertCompletionItem(
     const {
         detail,
         labelDetails,
-        label,
+        label: rawLabel,
         kind,
         documentation,
         additionalTextEdits,
@@ -343,6 +380,7 @@ export function convertCompletionItem(
         commitCharacters,
         filterText,
     } = item;
+    const label = typeof rawLabel === "string" ? rawLabel : "";
 
     // Resolve at most once; shared by the info panel and apply
     let resolvedItemPromise: Promise<LSP.CompletionItem> | null = null;
@@ -362,11 +400,15 @@ export function convertCompletionItem(
         ) {
             const state = view.state;
 
-            const {
+            let {
                 from: mainFrom,
                 to: mainTo,
                 newText: mainText,
             } = resolveMainEdit(state.doc, item, from, to);
+            if (mainFrom > to || mainTo < to) {
+                mainFrom = from;
+                mainTo = to;
+            }
             let newText = mainText;
 
             // additionalTextEdits refer to the document as it was before the
@@ -519,7 +561,7 @@ export function sortCompletionItems(
         language === "python" ? pythonSortCompletion : undefined,
     ].filter(Boolean);
 
-    let result = items;
+    let result = [...items];
 
     // If we found a token that matches our completion pattern
     if (matchBefore && filter) {
@@ -528,7 +570,10 @@ export function sortCompletionItems(
         if (/^\w+$/.test(word)) {
             // Filter items to only include those that start with the current word
             result = result.filter(({ label, filterText }) => {
-                const text = filterText ?? label;
+                const text =
+                    typeof filterText === "string"
+                        ? filterText
+                        : safeLabel(label);
                 return text.toLowerCase().startsWith(word);
             });
         }
@@ -548,30 +593,34 @@ function prefixSortCompletion(prefix: string) {
     //    matched against filterText/label instead)
     // 2. Otherwise order by sortText (falling back to label)
     return (a: LSP.CompletionItem, b: LSP.CompletionItem) => {
-        const aMatches = (a.filterText ?? a.label).startsWith(prefix);
-        const bMatches = (b.filterText ?? b.label).startsWith(prefix);
+        const aMatches = filterText(a).startsWith(prefix);
+        const bMatches = filterText(b).startsWith(prefix);
         if (aMatches && !bMatches) {
             return -1;
         }
         if (!aMatches && bMatches) {
             return 1;
         }
-        const aText = a.sortText ?? a.label;
-        const bText = b.sortText ?? b.label;
+        const aText =
+            typeof a.sortText === "string" ? a.sortText : safeLabel(a.label);
+        const bText =
+            typeof b.sortText === "string" ? b.sortText : safeLabel(b.label);
         return aText.localeCompare(bText);
     };
 }
 
 function nameSortCompletion(a: LSP.CompletionItem, b: LSP.CompletionItem) {
-    const aText = a.sortText ?? a.label;
-    const bText = b.sortText ?? b.label;
+    const aText =
+        typeof a.sortText === "string" ? a.sortText : safeLabel(a.label);
+    const bText =
+        typeof b.sortText === "string" ? b.sortText : safeLabel(b.label);
     return aText.localeCompare(bText);
 }
 
 function pythonSortCompletion(a: LSP.CompletionItem, b: LSP.CompletionItem) {
     // For python, if label ends with `=`, it should be sorted first
-    const aIsAssignment = a.label.endsWith("=");
-    const bIsAssignment = b.label.endsWith("=");
+    const aIsAssignment = safeLabel(a.label).endsWith("=");
+    const bIsAssignment = safeLabel(b.label).endsWith("=");
     if (aIsAssignment && !bIsAssignment) {
         return -1;
     }
@@ -579,4 +628,14 @@ function pythonSortCompletion(a: LSP.CompletionItem, b: LSP.CompletionItem) {
         return 1;
     }
     return 0;
+}
+
+function filterText(item: LSP.CompletionItem): string {
+    return typeof item.filterText === "string"
+        ? item.filterText
+        : safeLabel(item.label);
+}
+
+function safeLabel(label: unknown): string {
+    return typeof label === "string" ? label : "";
 }

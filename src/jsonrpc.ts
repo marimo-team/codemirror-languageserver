@@ -90,6 +90,8 @@ export interface Transport {
     send(message: JSONRPCMessage): void;
     /** Subscribe to inbound frames; the returned function unsubscribes. */
     onMessage(handler: (message: JSONRPCMessage) => void): () => void;
+    /** Subscribe to a connection that fails after it has opened. */
+    onClose?(handler: (error: Error) => void): () => void;
     /** Tear down the connection and release resources. */
     close(): void;
 }
@@ -124,9 +126,11 @@ export class JSONRPCClient {
     private readonly transport: Transport;
     private readonly pending = new Map<RequestId, PendingRequest>();
     private readonly disconnect: () => void;
+    private readonly disconnectClose?: () => void;
     private readonly connected: Promise<void>;
     private nextId = 0;
     private closed = false;
+    private isConnected = false;
     private notificationHandler?: (notification: JSONRPCNotification) => void;
     private requestHandler?: (request: JSONRPCRequest) => void;
 
@@ -135,7 +139,18 @@ export class JSONRPCClient {
         this.disconnect = transport.onMessage((message) =>
             this.receive(message),
         );
+        this.disconnectClose = transport.onClose?.((error) => {
+            for (const id of [...this.pending.keys()]) {
+                this.settle(id, (pending) => pending.reject(error));
+            }
+        });
         this.connected = transport.connect();
+        this.connected.then(
+            () => {
+                this.isConnected = true;
+            },
+            () => {},
+        );
         // A connection failure surfaces on the first request/notification;
         // swallow it here so it is never an unhandled rejection on its own.
         this.connected.catch(() => {});
@@ -178,32 +193,39 @@ export class JSONRPCClient {
                 );
             }, timeout);
             this.pending.set(id, { resolve, reject, timer });
-            this.connected.then(
-                () => {
-                    // The request may have timed out or been closed while
-                    // connecting; only send if it is still pending.
-                    if (!this.pending.has(id)) {
-                        return;
-                    }
-                    try {
-                        this.transport.send({
-                            jsonrpc: "2.0",
-                            id,
-                            method,
-                            params,
-                        });
-                    } catch (error) {
-                        this.settle(id, (p) => p.reject(toError(error)));
-                    }
-                },
-                (error) => this.settle(id, (p) => p.reject(toError(error))),
+            const send = () => {
+                if (!this.pending.has(id)) {
+                    return;
+                }
+                try {
+                    this.transport.send({
+                        jsonrpc: "2.0",
+                        id,
+                        method,
+                        params,
+                    });
+                } catch (error) {
+                    this.settle(id, (p) => p.reject(toError(error)));
+                }
+            };
+            if (this.isConnected) {
+                send();
+                return;
+            }
+            this.connected.then(send, (error) =>
+                this.settle(id, (p) => p.reject(toError(error))),
             );
         });
     }
 
     /** Send a fire-and-forget notification. */
     notify(method: string, params: unknown): Promise<void> {
-        return this.dispatch({ jsonrpc: "2.0", method, params });
+        const dispatched = this.dispatch({ jsonrpc: "2.0", method, params });
+        // Most notification call sites intentionally discard the promise.
+        // Mark connection failures handled while still returning the original
+        // rejected promise to callers that choose to await it.
+        dispatched.catch(() => {});
+        return dispatched;
     }
 
     /** Send a response to a server-initiated request. */
@@ -225,6 +247,7 @@ export class JSONRPCClient {
         }
         this.pending.clear();
         this.disconnect();
+        this.disconnectClose?.();
         this.transport.close();
     }
 
@@ -232,6 +255,14 @@ export class JSONRPCClient {
     private dispatch(message: JSONRPCMessage): Promise<void> {
         if (this.closed) {
             return Promise.resolve();
+        }
+        if (this.isConnected) {
+            try {
+                this.transport.send(message);
+                return Promise.resolve();
+            } catch (error) {
+                return Promise.reject(toError(error));
+            }
         }
         return this.connected.then(() => {
             // close() may have torn down the transport while connecting.
@@ -252,7 +283,13 @@ export class JSONRPCClient {
     }
 
     private receive(message: JSONRPCMessage): void {
-        if (this.closed || message == null || typeof message !== "object") {
+        if (
+            this.closed ||
+            message == null ||
+            typeof message !== "object" ||
+            Array.isArray(message) ||
+            (message as { jsonrpc?: unknown }).jsonrpc !== "2.0"
+        ) {
             return;
         }
         // A frame with a method is a request (has an id) or a notification (no
@@ -269,17 +306,51 @@ export class JSONRPCClient {
             return;
         }
         const response = message as JSONRPCResponse;
-        this.settle(response.id, (pending) => {
-            if ("error" in response && response.error) {
+        let responseId: RequestId = response.id;
+        if (
+            typeof responseId === "string" &&
+            !this.pending.has(responseId) &&
+            /^\d+$/.test(responseId)
+        ) {
+            const numericId = Number(responseId);
+            if (this.pending.has(numericId)) {
+                responseId = numericId;
+            }
+        }
+        this.settle(responseId, (pending) => {
+            if ("error" in response) {
+                const error = response.error as unknown;
+                if (
+                    typeof error !== "object" ||
+                    error === null ||
+                    typeof (error as { code?: unknown }).code !== "number" ||
+                    typeof (error as { message?: unknown }).message !== "string"
+                ) {
+                    pending.reject(
+                        new RPCError(
+                            ErrorCodes.InvalidRequest,
+                            "Malformed JSON-RPC error response",
+                            error,
+                        ),
+                    );
+                    return;
+                }
                 pending.reject(
                     new RPCError(
-                        response.error.code,
-                        response.error.message,
-                        response.error.data,
+                        (error as JSONRPCErrorObject).code,
+                        (error as JSONRPCErrorObject).message,
+                        (error as JSONRPCErrorObject).data,
                     ),
                 );
-            } else {
+            } else if ("result" in response) {
                 pending.resolve((response as JSONRPCSuccessResponse).result);
+            } else {
+                pending.reject(
+                    new RPCError(
+                        ErrorCodes.InvalidRequest,
+                        "Malformed JSON-RPC response: missing result or error",
+                    ),
+                );
             }
         });
     }

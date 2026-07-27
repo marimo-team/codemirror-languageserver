@@ -127,6 +127,7 @@ it("handles rename preparation and execution", async () => {
         rootUri: "file:///root",
         workspaceFolders: [{ uri: "file:///root", name: "root" }],
     });
+    await client.initializePromise;
 
     // Mock the client's methods for rename
     // biome-ignore lint/suspicious/noExplicitAny: tests
@@ -251,7 +252,7 @@ it("applies rename changes correctly to a document", async () => {
     // biome-ignore lint/suspicious/noExplicitAny: tests
     (client as any).client.request = vi
         .fn()
-        // biome-ignore lint/suspicious/noExplicitAny: <explanation>
+        // biome-ignore lint/suspicious/noExplicitAny: mock heterogeneous request methods
         .mockImplementation((method: any) => {
             if (method === "textDocument/rename") {
                 return Promise.resolve<WorkspaceEdit>({
@@ -259,7 +260,7 @@ it("applies rename changes correctly to a document", async () => {
                         {
                             textDocument: {
                                 uri: "file:///root/file.ts",
-                                version: 1,
+                                version: 0,
                             },
                             edits: [
                                 {
@@ -338,7 +339,7 @@ it("applies rename the whole cell", async () => {
                     {
                         textDocument: {
                             uri: "file:///root/file.ts",
-                            version: 1,
+                            version: 0,
                         },
                         edits: [
                             {

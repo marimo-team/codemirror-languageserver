@@ -8,9 +8,16 @@ export function posToOffset(
     doc: Text,
     pos: { line: number; character: number },
 ): number | undefined {
+    if (
+        !(Number.isInteger(pos.line) && Number.isFinite(pos.character)) ||
+        pos.line < 0 ||
+        pos.character < 0
+    ) {
+        return;
+    }
     if (pos.line >= doc.lines) {
         // Next line (implying the end of the document)
-        if (pos.character === 0) {
+        if (pos.line === doc.lines && pos.character === 0) {
             return doc.length;
         }
         return;
@@ -25,13 +32,16 @@ export function posToOffsetOrZero(
     doc: Text,
     pos: { line: number; character: number },
 ): number {
-    return posToOffset(doc, pos) || 0;
+    return posToOffset(doc, pos) ?? 0;
 }
 
 export function offsetToPos(doc: Text, offset: number) {
-    const line = doc.lineAt(offset);
+    const clampedOffset = Number.isFinite(offset)
+        ? Math.max(0, Math.min(offset, doc.length))
+        : 0;
+    const line = doc.lineAt(clampedOffset);
     return {
-        character: offset - line.from,
+        character: clampedOffset - line.from,
         line: line.number - 1,
     };
 }
@@ -56,6 +66,84 @@ export function renderMarkdown(markdown: string) {
     });
 }
 
+function escapeHTML(value: string): string {
+    return value.replace(
+        /[&<>"']/g,
+        (character) =>
+            ({
+                "&": "&amp;",
+                "<": "&lt;",
+                ">": "&gt;",
+                '"': "&quot;",
+                "'": "&#39;",
+            })[character] ?? character,
+    );
+}
+
+function isSafeDocumentationUrl(value: string): boolean {
+    const trimmed = value.trim();
+    if (trimmed.startsWith("//")) {
+        return false;
+    }
+    try {
+        const url = new URL(trimmed, "https://codemirror.invalid/");
+        return (
+            url.protocol === "http:" ||
+            url.protocol === "https:" ||
+            url.protocol === "mailto:"
+        );
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Removes active content from server-provided documentation HTML.
+ *
+ * Markdown renderers are host-configurable, so sanitization happens after
+ * rendering rather than relying on the default renderer to be safe.
+ */
+export function sanitizeDocumentationHTML(html: string): string {
+    if (typeof document === "undefined") {
+        return html
+            .replace(
+                /<\s*\/?\s*(?:script|style|iframe|object|embed|img)\b[^>]*>/gi,
+                "",
+            )
+            .replace(/\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "")
+            .replace(/\s+srcdoc\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "")
+            .replace(
+                /\s+(href|src)\s*=\s*(["'])(.*?)\2/gi,
+                (attribute, name: string, quote: string, value: string) =>
+                    isSafeDocumentationUrl(value)
+                        ? attribute
+                        : ` ${name}=${quote}${quote}`,
+            );
+    }
+
+    const template = document.createElement("template");
+    template.innerHTML = html;
+    for (const element of template.content.querySelectorAll(
+        "script, style, iframe, object, embed, img",
+    )) {
+        element.remove();
+    }
+    for (const element of template.content.querySelectorAll("*")) {
+        for (const attribute of [...element.attributes]) {
+            const name = attribute.name.toLowerCase();
+            if (
+                name.startsWith("on") ||
+                name === "srcdoc" ||
+                ((name === "href" || name === "src") &&
+                    !isSafeDocumentationUrl(attribute.value))
+            ) {
+                element.removeAttribute(attribute.name);
+            }
+        }
+    }
+    return template.innerHTML;
+}
+
 export function formatContents(
     contents:
         | LSP.MarkupContent
@@ -64,29 +152,52 @@ export function formatContents(
         | undefined,
     markdownRenderer = renderMarkdown,
 ): string {
+    return formatContentsInner(contents, markdownRenderer, new WeakSet());
+}
+
+function formatContentsInner(
+    contents:
+        | LSP.MarkupContent
+        | LSP.MarkedString
+        | LSP.MarkedString[]
+        | undefined,
+    markdownRenderer: (markdown: string) => string,
+    seen: WeakSet<object>,
+): string {
     if (!contents) {
         return "";
     }
+    if (typeof contents === "object") {
+        if (seen.has(contents)) {
+            return "";
+        }
+        seen.add(contents);
+    }
     if (isLSPMarkupContent(contents)) {
-        let value = contents.value;
+        const rawValue = contents.value;
+        if (typeof rawValue !== "string") {
+            return "";
+        }
+        let value = escapeHTML(rawValue);
         if (contents.kind === "markdown") {
-            value = markdownRenderer(value.trim());
+            value = markdownRenderer(rawValue.trim());
         }
         return value;
     }
     if (Array.isArray(contents)) {
         return contents
-            .map((c) => formatContents(c, markdownRenderer))
+            .map((c) => formatContentsInner(c, markdownRenderer, seen))
             .filter(Boolean)
             .join("\n\n");
     }
     if (typeof contents === "string") {
-        return contents;
+        return escapeHTML(contents);
     }
     if (isLSPMarkedStringObject(contents)) {
         // Legacy MarkedString form: render as a fenced code block
+        const language = contents.language.replace(/[^\w+-]/g, "");
         return markdownRenderer(
-            `\`\`\`${contents.language}\n${contents.value}\n\`\`\``,
+            `\`\`\`${language}\n${contents.value ?? ""}\n\`\`\``,
         );
     }
     return "";
@@ -141,7 +252,9 @@ export function renderDocumentation(
     },
 ): void {
     if (options.allowHTMLContent) {
-        element.innerHTML = formatContents(contents, options.markdownRenderer);
+        element.innerHTML = sanitizeDocumentationHTML(
+            formatContents(contents, options.markdownRenderer),
+        );
     } else {
         element.textContent = formatPlainTextContents(contents);
     }
@@ -158,11 +271,11 @@ export function longestCommonPrefix(strs: string[]): string {
     if (strs.length === 1) return strs[0] || "";
 
     // Sort the array
-    strs.sort();
+    const sorted = [...strs].sort();
 
     // Get the first and last string after sorting
-    const firstStr = strs[0] || "";
-    const lastStr = strs[strs.length - 1] || "";
+    const firstStr = sorted[0] || "";
+    const lastStr = sorted[sorted.length - 1] || "";
 
     // Find the common prefix between the first and last string
     let i = 0;
@@ -186,7 +299,7 @@ export function prefixMatch(items: LSP.CompletionItem[]) {
         return undefined;
     }
 
-    const labels = items.map((item) => item.textEdit?.newText || item.label);
+    const labels = items.map((item) => item.textEdit?.newText ?? item.label);
     const prefix = longestCommonPrefix(labels);
 
     if (prefix === "") {
@@ -233,7 +346,12 @@ export function isInsertReplaceEdit(
 export function isLSPMarkupContent(
     contents: LSP.MarkupContent | LSP.MarkedString | LSP.MarkedString[],
 ): contents is LSP.MarkupContent {
-    return (contents as LSP.MarkupContent).kind !== undefined;
+    return (
+        typeof contents === "object" &&
+        contents !== null &&
+        !Array.isArray(contents) &&
+        "kind" in contents
+    );
 }
 
 /**
@@ -299,13 +417,30 @@ export function isEmptyDocumentation(
         | LSP.MarkedString[]
         | undefined,
 ) {
+    return isEmptyDocumentationInner(documentation, new WeakSet());
+}
+
+function isEmptyDocumentationInner(
+    documentation:
+        | LSP.MarkupContent
+        | LSP.MarkedString
+        | LSP.MarkedString[]
+        | undefined,
+    seen: WeakSet<object>,
+): boolean {
     if (documentation == null) {
         return true;
     }
     if (Array.isArray(documentation)) {
+        if (seen.has(documentation)) {
+            return true;
+        }
+        seen.add(documentation);
         return (
             documentation.length === 0 ||
-            documentation.every(isEmptyDocumentation)
+            documentation.every((value) =>
+                isEmptyDocumentationInner(value, seen),
+            )
         );
     }
     if (typeof documentation === "string") {
@@ -315,7 +450,7 @@ export function isEmptyDocumentation(
     if (typeof value === "string") {
         return isEmptyIshValue(value);
     }
-    return false;
+    return true;
 }
 
 function isEmptyIshValue(value: unknown) {
