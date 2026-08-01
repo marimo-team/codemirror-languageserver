@@ -16,7 +16,7 @@ importers:
         version: 3.18.2
     devDependencies:
       '@astral-sh/ruff-wasm-web':
-        specifier: ^0.15.20
+        specifier: 0.15.20
         version: 0.15.20
       '@biomejs/biome':
         specifier: 1.9.4
@@ -46,7 +46,7 @@ importers:
         specifier: 1.2.3
         version: 1.2.3
       '@typescript/vfs':
-        specifier: ^1.6.4
+        specifier: 1.6.4
         version: 1.6.4(typescript@5.9.3)
       '@vitest/coverage-v8':
         specifier: 3.2.4
