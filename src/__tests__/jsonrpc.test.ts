@@ -101,6 +101,29 @@ describe("request", () => {
         await expect(pending).resolves.toBe("ok");
     });
 
+    it("starts the response timeout after connecting and sending", async () => {
+        vi.useFakeTimers();
+        const transport = new ControlledTransport(false);
+        const client = new JSONRPCClient(transport);
+
+        const pending = client.request("initialize", {}, 1000);
+        const outcome = pending.then(
+            (value) => ({ value }),
+            (error: unknown) => ({ error }),
+        );
+
+        await vi.advanceTimersByTimeAsync(5000);
+        transport.openConnection();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(transport.sent).toEqual([
+            { jsonrpc: "2.0", id: 0, method: "initialize", params: {} },
+        ]);
+
+        await vi.advanceTimersByTimeAsync(999);
+        transport.receive({ jsonrpc: "2.0", id: 0, result: "ok" });
+        await expect(outcome).resolves.toEqual({ value: "ok" });
+    });
+
     it("rejects in-flight requests when the connection fails", async () => {
         const transport = new ControlledTransport(false);
         const client = new JSONRPCClient(transport);
