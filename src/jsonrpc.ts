@@ -101,7 +101,7 @@ const DEFAULT_TIMEOUT = 10000;
 interface PendingRequest {
     resolve: (value: unknown) => void;
     reject: (reason: unknown) => void;
-    timer: ReturnType<typeof setTimeout>;
+    timer?: ReturnType<typeof setTimeout>;
 }
 
 function hasId(
@@ -191,20 +191,21 @@ export class JSONRPCClient {
         }
         const id = this.nextId++;
         return new Promise<unknown>((resolve, reject) => {
-            const timer = setTimeout(() => {
-                this.pending.delete(id);
-                reject(
-                    new RPCError(
-                        ErrorCodes.RequestTimeout,
-                        `Request "${method}" timed out after ${timeout}ms`,
-                    ),
-                );
-            }, timeout);
-            this.pending.set(id, { resolve, reject, timer });
+            this.pending.set(id, { resolve, reject });
             const send = () => {
-                if (!this.pending.has(id)) {
+                const pending = this.pending.get(id);
+                if (!pending) {
                     return;
                 }
+                pending.timer = setTimeout(() => {
+                    this.pending.delete(id);
+                    reject(
+                        new RPCError(
+                            ErrorCodes.RequestTimeout,
+                            `Request "${method}" timed out after ${timeout}ms`,
+                        ),
+                    );
+                }, timeout);
                 try {
                     this.transport.send({
                         jsonrpc: "2.0",
@@ -248,7 +249,9 @@ export class JSONRPCClient {
         }
         this.closed = true;
         for (const pending of this.pending.values()) {
-            clearTimeout(pending.timer);
+            if (pending.timer !== undefined) {
+                clearTimeout(pending.timer);
+            }
             pending.reject(
                 new RPCError(ErrorCodes.InternalError, "Client closed"),
             );
@@ -285,7 +288,9 @@ export class JSONRPCClient {
         if (!pending) {
             return;
         }
-        clearTimeout(pending.timer);
+        if (pending.timer !== undefined) {
+            clearTimeout(pending.timer);
+        }
         this.pending.delete(id);
         handle(pending);
     }
