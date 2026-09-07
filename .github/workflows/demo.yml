@@ -32,7 +32,7 @@ jobs:
       # ty_wasm isn't published to npm, so build it from source. Without this the
       # demo silently falls back to Ruff-only (see demo/python/worker.ts).
       - name: ⎔ Setup Rust
-        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           targets: wasm32-unknown-unknown
 
