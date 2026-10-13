@@ -6,6 +6,8 @@ minimumReleaseAgeExclude:
   - "@marimo-team/*"
   # Renovate security update: vite@6.4.3
   - vite@6.4.3
+  # Renovate security update: vitest@4.1.11
+  - vitest@4.1.11
 blockExoticSubdeps: true
 trustPolicy: no-downgrade
 onlyBuiltDependencies: []
