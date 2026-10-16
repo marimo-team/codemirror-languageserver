@@ -46,7 +46,7 @@ jobs:
 
             - name: 📊 Report Coverage
               if: always()
-              uses: davelosert/vitest-coverage-report-action@8b157684c6a6b259b97d45e72b44242865c0f6a5 # v2
+              uses: davelosert/vitest-coverage-report-action@8f86cfb56ed6d5613ea8cdc5259f207fbfd51ece # v2
               with:
                   pr-number: auto
 
