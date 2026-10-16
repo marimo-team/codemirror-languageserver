@@ -59,12 +59,12 @@
         "@codemirror/view": "6.43.13",
         "@lezer/highlight": "1.2.3",
         "@typescript/vfs": "1.6.4",
-        "@vitest/coverage-v8": "3.2.4",
+        "@vitest/coverage-v8": "3.2.7",
         "codemirror": "6.0.2",
         "jsdom": "26.1.0",
         "typescript": "5.9.3",
         "vite": "6.4.3",
-        "vitest": "3.2.4"
+        "vitest": "3.2.7"
     },
     "dependencies": {
         "marked": "^15.0.6",
