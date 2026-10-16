@@ -874,11 +874,15 @@ export class LanguageServerClient {
         method: K,
         params: LSPRequestMap[K][0],
         timeout: number,
+        signal?: AbortSignal,
     ): Promise<LSPRequestMap[K][1]> {
         if (method === "initialize") {
-            return this.client.request(method, params, timeout) as Promise<
-                LSPRequestMap[K][1]
-            >;
+            return this.client.request(
+                method,
+                params,
+                timeout,
+                signal,
+            ) as Promise<LSPRequestMap[K][1]>;
         }
         // A capability the server has since dropped still counts, so a request
         // issued while it was advertised is not failed by a later change.
@@ -902,9 +906,12 @@ export class LanguageServerClient {
                     `Language server does not support method ${method}`,
                 );
             }
-            return this.client.request(method, params, timeout) as Promise<
-                LSPRequestMap[K][1]
-            >;
+            return this.client.request(
+                method,
+                params,
+                timeout,
+                signal,
+            ) as Promise<LSPRequestMap[K][1]>;
         });
     }
 
