@@ -870,6 +870,25 @@ export class LanguageServerClient {
         return () => this.notificationListeners.delete(listener);
     }
 
+    private waitForInitialization(signal?: AbortSignal): Promise<void> {
+        if (!signal) return this.initializePromise;
+        if (signal.aborted) {
+            return Promise.reject(
+                new DOMException("Request aborted", "AbortError"),
+            );
+        }
+        let onAbort: () => void;
+        const aborted = new Promise<never>((_, reject) => {
+            onAbort = () =>
+                reject(new DOMException("Request aborted", "AbortError"));
+            signal.addEventListener("abort", onAbort, { once: true });
+        });
+        // Cancel only this wait, not the handshake shared by other requests.
+        return Promise.race([this.initializePromise, aborted]).finally(() => {
+            signal.removeEventListener("abort", onAbort);
+        });
+    }
+
     protected request<K extends keyof LSPRequestMap>(
         method: K,
         params: LSPRequestMap[K][0],
@@ -893,7 +912,7 @@ export class LanguageServerClient {
         const registrationMayBePending =
             !(this.ready || this.capabilities) &&
             this.mayRegisterDynamically(method);
-        return this.initializePromise.then(() => {
+        return this.waitForInitialization(signal).then(() => {
             if (this.isClosed) {
                 throw new Error("Language server client is closed");
             }

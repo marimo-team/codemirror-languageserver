@@ -147,7 +147,21 @@ describe("LSP request cancellation", () => {
             });
         }
         if (outcome === "timeout") {
-            await vi.advanceTimersByTimeAsync(1000);
+            await vi.advanceTimersByTimeAsync(999);
+            expect(transport.send).toHaveBeenCalledTimes(1);
+            await vi.advanceTimersByTimeAsync(1);
+            expect(transport.send.mock.calls).toEqual([
+                [{ jsonrpc: "2.0", id: 0, method: "complete", params: {} }],
+                [
+                    {
+                        jsonrpc: "2.0",
+                        method: "$/cancelRequest",
+                        params: { id: 0 },
+                    },
+                ],
+            ]);
+            // A late response must not resurrect a timed-out request.
+            emit({ jsonrpc: "2.0", id: 0, result: "late" });
         }
         if (outcome === "disconnect") {
             disconnect(new Error("disconnected"));
@@ -205,10 +219,31 @@ describe("LanguageServerClient cancellation", () => {
     }
 
     let client: CancellableClient;
-    afterEach(() => {
-        client.close();
-        vi.useRealTimers();
+    beforeEach(() => {
+        vi.useFakeTimers();
     });
+    afterEach(async () => {
+        client.close();
+        await client.initializePromise.catch(() => {});
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+    });
+
+    async function startHandshake() {
+        const transport = new FakeTransport({ autoInitialize: false });
+        client = new CancellableClient({
+            transport,
+            rootUri: "file:///",
+            workspaceFolders: null,
+        });
+        await vi.advanceTimersByTimeAsync(0);
+        const request = transport.sent.find(
+            (message) => "method" in message && message.method === "initialize",
+        );
+        if (!(request && "id" in request))
+            throw new Error("Expected initialize request");
+        return { transport, id: request.id };
+    }
 
     it("forwards cancellation through the initialized language server client", async () => {
         vi.useFakeTimers();
@@ -247,36 +282,131 @@ describe("LanguageServerClient cancellation", () => {
         ]);
     });
 
-    it("does not send a queued request aborted during initialization", async () => {
-        vi.useFakeTimers();
-        const transport = new FakeTransport({ autoInitialize: false });
-        client = new CancellableClient({
-            transport,
-            rootUri: "file:///",
-            workspaceFolders: null,
-        });
-        const controller = new AbortController();
-        const response = client.hover(controller.signal);
-        controller.abort();
-        await vi.advanceTimersByTimeAsync(0);
-        const request = transport.sent.find(
-            (message) => "method" in message && message.method === "initialize",
-        );
-        if (!(request && "id" in request))
-            throw new Error("Expected initialize request");
-        transport.receive({
-            jsonrpc: "2.0",
-            id: request.id,
-            result: { capabilities: { hoverProvider: true } },
-        });
-        await expect(response).rejects.toMatchObject({ name: "AbortError" });
-        expect(
-            transport.sent.filter(
+    it.each(["already aborted", "abort during handshake"])(
+        "rejects before initialization completes: %s",
+        async (timing) => {
+            const { transport, id } = await startHandshake();
+            const controller = new AbortController();
+            const remove = vi.spyOn(controller.signal, "removeEventListener");
+            if (timing === "already aborted") controller.abort();
+            const rejected = vi.fn();
+            const settled = client.hover(controller.signal).catch(rejected);
+            controller.abort();
+            await vi.advanceTimersByTimeAsync(0);
+
+            // Assert before answering initialize: a stuck handshake must not block abort.
+            expect(rejected).toHaveBeenCalledExactlyOnceWith(
+                expect.objectContaining({ name: "AbortError" }),
+            );
+            expect(client.ready).toBe(false);
+            expect(transport.notificationsSent("$/cancelRequest")).toEqual([]);
+            expect(remove).toHaveBeenCalledTimes(
+                timing === "already aborted" ? 0 : 1,
+            );
+
+            // The shared handshake and unrelated requests remain usable.
+            const otherController = new AbortController();
+            const removeOther = vi.spyOn(
+                otherController.signal,
+                "removeEventListener",
+            );
+            const other = client.hover(otherController.signal);
+            transport.receive({
+                jsonrpc: "2.0",
+                id,
+                result: { capabilities: { hoverProvider: true } },
+            });
+            await client.initializePromise;
+            await vi.advanceTimersByTimeAsync(0);
+            const requests = transport.sent.filter(
                 (message) =>
                     "method" in message &&
                     message.method === "textDocument/hover",
-            ),
-        ).toEqual([]);
+            );
+            expect(requests).toHaveLength(1);
+            expect(removeOther).toHaveBeenCalledExactlyOnceWith(
+                "abort",
+                expect.any(Function),
+            );
+            const request = requests[0];
+            if (!(request && "id" in request))
+                throw new Error("Expected hover request");
+            transport.receive({ jsonrpc: "2.0", id: request.id, result: null });
+            await expect(other).resolves.toBeNull();
+            expect(removeOther).toHaveBeenCalledTimes(2);
+            otherController.abort();
+            await settled;
+            expect(rejected).toHaveBeenCalledTimes(1);
+            expect(transport.notificationsSent("$/cancelRequest")).toEqual([]);
+        },
+    );
+
+    it.each(["error", "close", "abort then error"])(
+        "cleans up a waiting request after handshake %s",
+        async (outcome) => {
+            vi.spyOn(console, "error").mockImplementation(() => {});
+            const { transport, id } = await startHandshake();
+            const controller = new AbortController();
+            const remove = vi.spyOn(controller.signal, "removeEventListener");
+            const rejected = vi.fn();
+            const settled = client.hover(controller.signal).catch(rejected);
+            if (outcome === "abort then error") {
+                controller.abort();
+                await vi.advanceTimersByTimeAsync(0);
+                expect(rejected).toHaveBeenCalledExactlyOnceWith(
+                    expect.objectContaining({ name: "AbortError" }),
+                );
+            }
+            if (outcome === "close") {
+                client.close();
+            } else {
+                transport.receive({
+                    jsonrpc: "2.0",
+                    id,
+                    error: { code: -32603, message: "handshake failed" },
+                });
+            }
+            await settled;
+            expect(rejected).toHaveBeenCalledTimes(1);
+            expect(rejected).toHaveBeenCalledWith(
+                expect.objectContaining(
+                    outcome === "abort then error"
+                        ? { name: "AbortError" }
+                        : {
+                              message:
+                                  outcome === "error"
+                                      ? "handshake failed"
+                                      : "Client closed",
+                          },
+                ),
+            );
+            expect(remove).toHaveBeenCalledExactlyOnceWith(
+                "abort",
+                expect.any(Function),
+            );
+            controller.abort();
+            expect(transport.sent).toHaveLength(1);
+            expect(vi.getTimerCount()).toBe(0);
+        },
+    );
+
+    it("does not send a request aborted as initialization resolves", async () => {
+        const { transport, id } = await startHandshake();
+        const controller = new AbortController();
+        const settled = client
+            .hover(controller.signal)
+            .catch((error: unknown) => error);
+        transport.receive({
+            jsonrpc: "2.0",
+            id,
+            result: { capabilities: { hoverProvider: true } },
+        });
+        controller.abort();
+        await expect(settled).resolves.toMatchObject({ name: "AbortError" });
+        await client.initializePromise;
+        expect(
+            transport.sent.filter((message) => "id" in message),
+        ).toHaveLength(1);
         expect(transport.notificationsSent("$/cancelRequest")).toEqual([]);
     });
 });
