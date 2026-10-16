@@ -221,6 +221,7 @@ it("handles rename preparation and execution", async () => {
             position: { line: 1, character: 5 },
         },
         10000,
+        undefined,
     );
 
     // biome-ignore lint/suspicious/noExplicitAny: tests
@@ -232,6 +233,7 @@ it("handles rename preparation and execution", async () => {
             newName: "newName",
         },
         10000,
+        undefined,
     );
 });
 

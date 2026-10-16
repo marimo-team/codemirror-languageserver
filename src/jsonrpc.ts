@@ -102,6 +102,7 @@ interface PendingRequest {
     resolve: (value: unknown) => void;
     reject: (reason: unknown) => void;
     timer?: ReturnType<typeof setTimeout>;
+    cleanup: () => void;
 }
 
 function hasId(
@@ -174,13 +175,22 @@ export class JSONRPCClient {
     /**
      * Send a request and resolve with its result. Rejects with an
      * {@link RPCError} if the server returns an error, the request times out,
-     * or the client is closed while it is in flight.
+     * or the client is closed while it is in flight. An aborted signal rejects
+     * with an `AbortError` and sends `$/cancelRequest` if the request was sent.
+     * Timeouts also cancel the server request. Cancellation is advisory: the
+     * server may finish anyway, but its late response is ignored.
      */
     request(
         method: string,
         params: unknown,
         timeout: number = DEFAULT_TIMEOUT,
+        signal?: AbortSignal,
     ): Promise<unknown> {
+        if (signal?.aborted) {
+            return Promise.reject(
+                new DOMException("Request aborted", "AbortError"),
+            );
+        }
         if (this.closed) {
             return Promise.reject(
                 new RPCError(ErrorCodes.InternalError, "Client closed"),
@@ -191,15 +201,29 @@ export class JSONRPCClient {
         }
         const id = this.nextId++;
         return new Promise<unknown>((resolve, reject) => {
-            this.pending.set(id, { resolve, reject });
+            let sent = false;
+            const cancel = (error: Error) => {
+                if (!this.pending.has(id)) return;
+                this.settle(id, (pending) => pending.reject(error));
+                if (sent) {
+                    void this.notify("$/cancelRequest", { id }).catch(() => {});
+                }
+            };
+            const onAbort = () =>
+                cancel(new DOMException("Request aborted", "AbortError"));
+            this.pending.set(id, {
+                resolve,
+                reject,
+                cleanup: () => signal?.removeEventListener("abort", onAbort),
+            });
+            signal?.addEventListener("abort", onAbort, { once: true });
             const send = () => {
                 const pending = this.pending.get(id);
                 if (!pending) {
                     return;
                 }
                 pending.timer = setTimeout(() => {
-                    this.pending.delete(id);
-                    reject(
+                    cancel(
                         new RPCError(
                             ErrorCodes.RequestTimeout,
                             `Request "${method}" timed out after ${timeout}ms`,
@@ -207,6 +231,7 @@ export class JSONRPCClient {
                     );
                 }, timeout);
                 try {
+                    sent = true;
                     this.transport.send({
                         jsonrpc: "2.0",
                         id,
@@ -248,15 +273,13 @@ export class JSONRPCClient {
             return;
         }
         this.closed = true;
-        for (const pending of this.pending.values()) {
-            if (pending.timer !== undefined) {
-                clearTimeout(pending.timer);
-            }
-            pending.reject(
-                new RPCError(ErrorCodes.InternalError, "Client closed"),
+        for (const id of [...this.pending.keys()]) {
+            this.settle(id, (pending) =>
+                pending.reject(
+                    new RPCError(ErrorCodes.InternalError, "Client closed"),
+                ),
             );
         }
-        this.pending.clear();
         this.disconnect();
         this.disconnectClose?.();
         this.transport.close();
@@ -291,6 +314,7 @@ export class JSONRPCClient {
         if (pending.timer !== undefined) {
             clearTimeout(pending.timer);
         }
+        pending.cleanup();
         this.pending.delete(id);
         handle(pending);
     }
