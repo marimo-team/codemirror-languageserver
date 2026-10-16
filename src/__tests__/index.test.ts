@@ -173,6 +173,7 @@ describe("LanguageServer", () => {
                 "completionItem/resolve",
                 mockCompletionItem,
                 10000,
+                undefined,
             );
             expect(result).toEqual(resolvedItem);
         });
