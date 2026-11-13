@@ -10,7 +10,7 @@ permissions: {}
 jobs:
   build:
     name: 🏗️ Build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-p-small
 
     # Pin the ruff revision ty_wasm is built from so the deployed demo is
     # reproducible and matches the ty API demo/python/tyServer.ts targets.
@@ -74,7 +74,7 @@ jobs:
   deploy:
     name: 🚀 Deploy
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-p-small
 
     permissions:
       pages: write
