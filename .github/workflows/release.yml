@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-p-small
+    runs-on: "${{ vars.CI_RUNNER_SMALL || 'ubuntu-latest' }}"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -73,7 +73,7 @@ jobs:
 
   publish:
     needs: build
-    runs-on: ubuntu-p-small
+    runs-on: "${{ vars.CI_RUNNER_SMALL || 'ubuntu-latest' }}"
     permissions:
       id-token: write
       contents: read
@@ -99,7 +99,7 @@ jobs:
 
   release-notes:
     needs: publish
-    runs-on: ubuntu-p-small
+    runs-on: "${{ vars.CI_RUNNER_SMALL || 'ubuntu-latest' }}"
     permissions:
       contents: write
     steps:
@@ -120,7 +120,7 @@ jobs:
   notify:
     needs: [build, publish, release-notes]
     if: always()
-    runs-on: ubuntu-p-small
+    runs-on: "${{ vars.CI_RUNNER_SMALL || 'ubuntu-latest' }}"
     steps:
       - name: 📣 Notify release result
         uses: marimo-team/internal-gh-actions/release-notification@91f15bebd3f322db6717ba5a17983928a47ec991 # main
