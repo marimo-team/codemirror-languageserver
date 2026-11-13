@@ -14,7 +14,7 @@ env:
 
 jobs:
     test:
-        runs-on: ubuntu-latest
+        runs-on: ubuntu-p-small
 
         permissions:
             contents: read
@@ -51,7 +51,7 @@ jobs:
                   pr-number: auto
 
     security:
-        runs-on: ubuntu-latest
+        runs-on: ubuntu-p-small
         steps:
             - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -64,7 +64,7 @@ jobs:
               uses: github/codeql-action/analyze@b8d3b6e8af63cde30bdc382c0bc28114f4346c88 # v2
 
     spelling:
-        runs-on: ubuntu-latest
+        runs-on: ubuntu-p-small
         steps:
             - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
