@@ -1,73 +1,76 @@
 {
-    "name": "@marimo-team/codemirror-languageserver",
-    "publishConfig": {
-        "access": "public"
-    },
-    "sideEffects": false,
-    "version": "2.0.1",
-    "description": "Language Server Plugin for CodeMirror 6",
-    "files": ["dist"],
-    "exports": {
-        "./package.json": "./package.json",
-        ".": {
-            "import": {
-                "types": "./dist/index.d.ts",
-                "default": "./dist/index.js"
-            }
-        }
-    },
-    "module": "./dist/index.js",
-    "types": "./dist/index.d.ts",
-    "type": "module",
-    "scripts": {
-        "prepare": "tsc",
-        "dev": "vite",
-        "build": "tsc",
-        "build:demo": "vite build",
-        "build:ty-wasm": "bash scripts/build-ty-wasm.sh",
-        "lint": "biome check --write",
-        "lint:ci": "biome check",
-        "typecheck": "tsc --noEmit",
-        "preview": "vite preview",
-        "test": "vitest"
-    },
-    "homepage": "https://github.com/marimo-team/codemirror-languageserver",
-    "bugs": {
-        "url": "https://github.com/marimo-team/codemirror-languageserver/issues"
-    },
-    "repository": {
-        "type": "git",
-        "url": "git+https://github.com/marimo-team/codemirror-languageserver.git"
-    },
-    "license": "BSD-3-Clause",
-    "packageManager": "pnpm@10.34.5",
-    "peerDependencies": {
-        "@codemirror/autocomplete": "^6",
-        "@codemirror/lint": "^6",
-        "@codemirror/state": "^6",
-        "@codemirror/view": "^6"
-    },
-    "devDependencies": {
-        "@astral-sh/ruff-wasm-web": "0.15.20",
-        "@biomejs/biome": "1.9.4",
-        "@codemirror/autocomplete": "6.20.3",
-        "@codemirror/lang-javascript": "6.2.5",
-        "@codemirror/lang-python": "6.2.1",
-        "@codemirror/language": "6.12.4",
-        "@codemirror/lint": "6.9.7",
-        "@codemirror/state": "6.7.6",
-        "@codemirror/view": "6.43.13",
-        "@lezer/highlight": "1.2.3",
-        "@typescript/vfs": "1.6.4",
-        "@vitest/coverage-v8": "4.1.11",
-        "codemirror": "6.0.2",
-        "jsdom": "26.1.0",
-        "typescript": "5.9.3",
-        "vite": "6.4.3",
-        "vitest": "4.1.11"
-    },
-    "dependencies": {
-        "marked": "^15.0.6",
-        "vscode-languageserver-protocol": "^3.17.5"
+  "name": "@marimo-team/codemirror-languageserver",
+  "publishConfig": {
+    "access": "public"
+  },
+  "sideEffects": false,
+  "version": "2.0.1",
+  "description": "Language Server Plugin for CodeMirror 6",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
     }
+  },
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "type": "module",
+  "scripts": {
+    "prepare": "tsc",
+    "dev": "vite",
+    "build": "tsc",
+    "build:demo": "vite build",
+    "build:ty-wasm": "bash scripts/build-ty-wasm.sh",
+    "lint": "biome check --write",
+    "lint:ci": "biome check",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview",
+    "test": "vitest",
+    "release": "bash scripts/release.sh"
+  },
+  "homepage": "https://github.com/marimo-team/codemirror-languageserver",
+  "bugs": {
+    "url": "https://github.com/marimo-team/codemirror-languageserver/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/marimo-team/codemirror-languageserver.git"
+  },
+  "license": "BSD-3-Clause",
+  "packageManager": "pnpm@10.34.5",
+  "peerDependencies": {
+    "@codemirror/autocomplete": "^6",
+    "@codemirror/lint": "^6",
+    "@codemirror/state": "^6",
+    "@codemirror/view": "^6"
+  },
+  "devDependencies": {
+    "@astral-sh/ruff-wasm-web": "0.15.20",
+    "@biomejs/biome": "1.9.4",
+    "@codemirror/autocomplete": "6.20.3",
+    "@codemirror/lang-javascript": "6.2.5",
+    "@codemirror/lang-python": "6.2.1",
+    "@codemirror/language": "6.12.4",
+    "@codemirror/lint": "6.9.7",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.13",
+    "@lezer/highlight": "1.2.3",
+    "@typescript/vfs": "1.6.4",
+    "@vitest/coverage-v8": "4.1.11",
+    "codemirror": "6.0.2",
+    "jsdom": "26.1.0",
+    "typescript": "5.9.3",
+    "vite": "6.4.3",
+    "vitest": "4.1.11"
+  },
+  "dependencies": {
+    "marked": "^15.0.6",
+    "vscode-languageserver-protocol": "^3.17.5"
+  }
 }
