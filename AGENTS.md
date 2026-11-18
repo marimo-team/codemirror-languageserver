@@ -15,4 +15,4 @@ pnpm run dev           # vite dev server
 ```
 
 - Licensed BSD-3-Clause (inherited from the upstream fork), unlike the Apache-2.0 sibling repos.
-- Release: pushing a `v*` tag triggers release.yml, which publishes to npm via OIDC.
+- Release: `./scripts/release.sh patch` requests a release PR; see [RELEASING.md](RELEASING.md).
