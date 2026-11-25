@@ -529,9 +529,13 @@ function lspTheme(p: Palette): Extension {
     });
 }
 
+const themes: Record<ThemeMode, Extension> = {
+    light: [editorTheme(LIGHT), highlightStyle(LIGHT), lspTheme(LIGHT)],
+    dark: [editorTheme(DARK), highlightStyle(DARK), lspTheme(DARK)],
+};
+
 function themeFor(mode: ThemeMode): Extension {
-    const p = mode === "dark" ? DARK : LIGHT;
-    return [editorTheme(p), highlightStyle(p), lspTheme(p)];
+    return themes[mode];
 }
 
 // ---------------------------------------------------------------------------
