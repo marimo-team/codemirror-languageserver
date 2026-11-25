@@ -2444,6 +2444,29 @@ export function languageServer(options: LanguageServerWebsocketOptions) {
     });
 }
 
+const diagnosticsTheme = EditorView.baseTheme({
+    ".cm-lsp-unnecessary": { opacity: "0.6" },
+    ".cm-lsp-deprecated": { textDecoration: "line-through" },
+    ".cm-diagnostic-related": {
+        marginTop: "4px",
+        display: "flex",
+        flexDirection: "column",
+        gap: "2px",
+    },
+    ".cm-diagnostic-related-clickable": { cursor: "pointer" },
+    ".cm-diagnostic-related-location": { opacity: "0.7" },
+    ".cm-diagnostic-code-link": {
+        display: "inline-block",
+        marginTop: "4px",
+    },
+});
+
+const deprecatedCompletionTheme = EditorView.baseTheme({
+    ".cm-tooltip-autocomplete li.cm-deprecated .cm-completionLabel": {
+        textDecoration: "line-through",
+    },
+});
+
 export function languageServerWithClient(options: LanguageServerOptions) {
     const shortcuts = {
         rename: "F2",
@@ -2502,25 +2525,7 @@ export function languageServerWithClient(options: LanguageServerOptions) {
     // plus the field that keeps related-info click targets mapped through
     // edits. Hosts can override these classes via their own theme.
     if (featuresOptions.diagnosticsEnabled) {
-        extensions.push(
-            relatedLocationAnchors,
-            EditorView.baseTheme({
-                ".cm-lsp-unnecessary": { opacity: "0.6" },
-                ".cm-lsp-deprecated": { textDecoration: "line-through" },
-                ".cm-diagnostic-related": {
-                    marginTop: "4px",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "2px",
-                },
-                ".cm-diagnostic-related-clickable": { cursor: "pointer" },
-                ".cm-diagnostic-related-location": { opacity: "0.7" },
-                ".cm-diagnostic-code-link": {
-                    display: "inline-block",
-                    marginTop: "4px",
-                },
-            }),
-        );
+        extensions.push(relatedLocationAnchors, diagnosticsTheme);
     }
 
     // Add shortcuts
@@ -2750,12 +2755,7 @@ export function languageServerWithClient(options: LanguageServerOptions) {
         const userOptionClass = options.completionConfig?.optionClass;
         extensions.push(
             // Hosts can override via `.cm-tooltip-autocomplete li.cm-deprecated`
-            EditorView.baseTheme({
-                ".cm-tooltip-autocomplete li.cm-deprecated .cm-completionLabel":
-                    {
-                        textDecoration: "line-through",
-                    },
-            }),
+            deprecatedCompletionTheme,
             autocompletion({
                 ...options.completionConfig,
                 optionClass: (completion) =>
